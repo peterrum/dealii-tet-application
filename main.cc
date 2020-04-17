@@ -18,9 +18,11 @@
 // of subdivisions.
 
 
+#include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/mpi.h>
 
 #include <deal.II/dofs/dof_handler.h>
+#include <deal.II/dofs/dof_tools.h>
 
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_values.h>
@@ -30,6 +32,12 @@
 #include <deal.II/grid/grid_in.h>
 #include <deal.II/grid/grid_out.h>
 #include <deal.II/grid/tria.h>
+
+#include <deal.II/lac/dynamic_sparsity_pattern.h>
+#include <deal.II/lac/full_matrix.h>
+#include <deal.II/lac/precondition.h>
+#include <deal.II/lac/solver_cg.h>
+#include <deal.II/lac/sparse_matrix.h>
 
 #include <deal.II/tet/fe_q.h>
 #include <deal.II/tet/grid_generator.h>
@@ -67,6 +75,25 @@ test(const Triangulation<dim, spacedim> &tria,
   DoFHandler<dim, spacedim> dof_handler(tria);
   dof_handler.distribute_dofs(fe);
 
+  SparseMatrix<double> system_matrix;
+  Vector<double>       solution;
+  Vector<double>       system_rhs;
+
+  DynamicSparsityPattern dynamic_sparsity_pattern(dof_handler.n_dofs(),
+                                                  dof_handler.n_dofs());
+  DoFTools::make_sparsity_pattern(dof_handler, dynamic_sparsity_pattern);
+  SparsityPattern sparsity_pattern;
+  sparsity_pattern.copy_from(dynamic_sparsity_pattern);
+
+  system_matrix.reinit(sparsity_pattern);
+  solution.reinit(dof_handler.n_dofs());
+  system_rhs.reinit(dof_handler.n_dofs());
+
+  AffineConstraints constraint_matrix;
+
+  DoFTools::make_zero_boundary_constraints(dof_handler, constraint_matrix);
+
+  // TODO: reduce number of flags
   FEValues<dim, spacedim> fe_values(mapping,
                                     fe,
                                     quad,
@@ -74,7 +101,53 @@ test(const Triangulation<dim, spacedim> &tria,
                                       update_JxW_values |
                                       update_contravariant_transformation |
                                       update_covariant_transformation |
-                                      update_gradients);
+                                      update_values | update_gradients);
+
+  const unsigned int dofs_per_cell = fe.dofs_per_cell;
+  const unsigned int n_q_points    = quad.size();
+
+  std::vector<types::global_dof_index> dof_indices(dofs_per_cell);
+  FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
+  Vector<double>     cell_rhs(dofs_per_cell);
+
+  for (const auto &cell : dof_handler.cell_iterators())
+    {
+      fe_values.reinit(cell);
+      cell_matrix = 0;
+      cell_rhs    = 0;
+
+      for (unsigned int q_index = 0; q_index < n_q_points; ++q_index)
+        for (unsigned int i = 0; i < dofs_per_cell; ++i)
+          {
+            for (unsigned int j = 0; j < dofs_per_cell; ++j)
+              cell_matrix(i, j) +=
+                (fe_values.shape_grad(i, q_index) * // grad phi_i(x_q)
+                 fe_values.shape_grad(j, q_index) * // grad phi_j(x_q)
+                 fe_values.JxW(q_index));           // dx
+            cell_rhs(i) += (fe_values.shape_value(i, q_index) * // phi_i(x_q)
+                            1.0 *                               // 1.0
+                            fe_values.JxW(q_index));            // dx
+          }
+
+      cell->get_dof_indices(dof_indices);
+
+      constraint_matrix.distribute_local_to_global(cell_matrix,
+                                                   dof_indices,
+                                                   system_matrix);
+
+      constraint_matrix.distribute_local_to_global(cell_rhs,
+                                                   dof_indices,
+                                                   system_rhs);
+    }
+
+  SolverControl solver_control(1000, 1e-12);
+  SolverCG      solver(solver_control);
+  solver.solve(system_matrix, solution, system_rhs, PreconditionIdentity());
+
+  std::cout << "   " << solver_control.last_step()
+            << " CG iterations needed to obtain convergence." << std::endl;
+
+  std::cout << std::endl;
 }
 
 template <int dim, int spacedim = dim>
@@ -169,8 +242,13 @@ main(int argc, char **argv)
 
   const MPI_Comm comm = MPI_COMM_WORLD;
 
+  ConditionalOStream pcout(std::cout,
+                           Utilities::MPI::this_mpi_process(comm) == 0);
+
   // test TET
   {
+    pcout << "Solve problem on TET mesh:" << std::endl;
+
     params.file_name_out = "mesh-tet";
     params.p1            = Point<2>(0, 0);
     params.p2            = Point<2>(1, 1);
@@ -179,6 +257,8 @@ main(int argc, char **argv)
 
   // test QUAD
   {
+    pcout << "Solve problem on QUAD mesh:" << std::endl;
+
     params.file_name_out = "mesh-quad";
     params.p1            = Point<2>(1.1, 0); // shift to the right for
     params.p2            = Point<2>(2.1, 1); // visualization purposes
