@@ -1,3 +1,23 @@
+// ---------------------------------------------------------------------
+//
+// Copyright (C) 2020 by the deal.II authors
+//
+// This file is part of the deal.II library.
+//
+// The deal.II library is free software; you can use it, redistribute
+// it, and/or modify it under the terms of the GNU Lesser General
+// Public License as published by the Free Software Foundation; either
+// version 2.1 of the License, or (at your option) any later version.
+// The full text of the license can be found in the file LICENSE.md at
+// the top level directory of deal.II.
+//
+// ---------------------------------------------------------------------
+
+
+// Solve Poisson problem on a tet mesh and on a quad mesh with the same number
+// of subdivisions.
+
+
 #include <deal.II/base/mpi.h>
 
 #include <deal.II/dofs/dof_handler.h>
@@ -13,8 +33,6 @@
 #include <deal.II/tet/grid_generator.h>
 
 using namespace dealii;
-
-const MPI_Comm comm = MPI_COMM_WORLD;
 
 template <int dim>
 struct Parameters
@@ -46,7 +64,7 @@ test(const Triangulation<dim, spacedim> &tria,
 
 template <int dim, int spacedim = dim>
 void
-test_tet(const Parameters<dim> &params)
+test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
 {
   // 1) Create triangulation...
   Tet::Triangulation<dim, spacedim> tria(comm);
@@ -68,7 +86,9 @@ test_tet(const Parameters<dim> &params)
 
   // 2) Output generated triangulation via
   GridOut       grid_out;
-  std::ofstream out(params.file_name_out);
+  std::ofstream out(params.file_name_out + "." +
+                    std::to_string(Utilities::MPI::this_mpi_process(comm)) +
+                    ".vtk");
   grid_out.write_vtk(tria, out);
 
   // 3) Select components
@@ -80,7 +100,7 @@ test_tet(const Parameters<dim> &params)
 
 template <int dim, int spacedim = dim>
 void
-test_quad(const Parameters<dim> &params)
+test_quad(const MPI_Comm &comm, const Parameters<dim> &params)
 {
   // 1) Create triangulation...
   parallel::distributed::Triangulation<dim, spacedim> tria(comm);
@@ -102,7 +122,9 @@ test_quad(const Parameters<dim> &params)
 
   // 2) Output generated triangulation via
   GridOut       grid_out;
-  std::ofstream out(params.file_name_out);
+  std::ofstream out(params.file_name_out + "." +
+                    std::to_string(Utilities::MPI::this_mpi_process(comm)) +
+                    ".vtk");
   grid_out.write_vtk(tria, out);
 
   // 3) Select components
@@ -115,25 +137,28 @@ test_quad(const Parameters<dim> &params)
 int
 main(int argc, char **argv)
 {
-  Utilities::MPI::MPI_InitFinalize(argc, argv, 1);
+  Utilities::MPI::MPI_InitFinalize mpi(argc, argv, 1);
 
+  // setup parameters: TODO move to json file
   Parameters<2> params;
   params.use_grid_generator = true;
-  params.repetitions        = std::vector<unsigned int>{1, 1};
-  params.p1                 = Point<2>(0, 0);
-  params.p2                 = Point<2>(1, 1);
+  params.repetitions        = std::vector<unsigned int>{3, 3};
+
+  const MPI_Comm comm = MPI_COMM_WORLD;
 
   // test TET
   {
-    std::cout << "A" << std::endl;
-    params.file_name_out = "mesh-tet.%d.vtk";
-    test_tet(params);
+    params.file_name_out = "mesh-tet";
+    params.p1            = Point<2>(0, 0);
+    params.p2            = Point<2>(1, 1);
+    test_tet(comm, params);
   }
 
   // test QUAD
   {
-    std::cout << "B" << std::endl;
-    params.file_name_out = "mesh-quad.%d.vtk";
-    test_tet(params);
+    params.file_name_out = "mesh-quad";
+    params.p1            = Point<2>(1.1, 0); // shift to the right for
+    params.p2            = Point<2>(2.1, 1); // visualization purposes
+    test_quad(comm, params);
   }
 }
