@@ -35,9 +35,14 @@
 
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
 #include <deal.II/lac/full_matrix.h>
+#include <deal.II/lac/la_parallel_vector.h>
 #include <deal.II/lac/precondition.h>
 #include <deal.II/lac/solver_cg.h>
 #include <deal.II/lac/sparse_matrix.h>
+#include <deal.II/lac/trilinos_sparse_matrix.h>
+#include <deal.II/lac/trilinos_sparsity_pattern.h>
+
+#include <deal.II/numerics/data_out.h>
 
 #include <deal.II/tet/fe_q.h>
 #include <deal.II/tet/grid_generator.h>
@@ -65,6 +70,21 @@ struct Parameters
   std::string file_name_out = "";
 };
 
+template <int dim, int spacedim>
+MPI_Comm
+get_communicator(const Triangulation<dim, spacedim> &tria)
+{
+  if (auto tria_ =
+        dynamic_cast<const parallel::TriangulationBase<dim, spacedim> *>(&tria))
+    return tria_->get_communicator();
+
+  if (auto tria_ =
+        dynamic_cast<const Tet::Triangulation<dim, spacedim> *>(&tria))
+    return tria_->get_communicator();
+
+  return MPI_COMM_SELF;
+}
+
 template <int dim, int spacedim = dim>
 void
 test(const Triangulation<dim, spacedim> &tria,
@@ -75,23 +95,32 @@ test(const Triangulation<dim, spacedim> &tria,
   DoFHandler<dim, spacedim> dof_handler(tria);
   dof_handler.distribute_dofs(fe);
 
-  SparseMatrix<double> system_matrix;
-  Vector<double>       solution;
-  Vector<double>       system_rhs;
-
-  DynamicSparsityPattern dynamic_sparsity_pattern(dof_handler.n_dofs(),
-                                                  dof_handler.n_dofs());
-  DoFTools::make_sparsity_pattern(dof_handler, dynamic_sparsity_pattern);
-  SparsityPattern sparsity_pattern;
-  sparsity_pattern.copy_from(dynamic_sparsity_pattern);
-
-  system_matrix.reinit(sparsity_pattern);
-  solution.reinit(dof_handler.n_dofs());
-  system_rhs.reinit(dof_handler.n_dofs());
-
   AffineConstraints constraint_matrix;
-
   DoFTools::make_zero_boundary_constraints(dof_handler, constraint_matrix);
+  constraint_matrix.close();
+
+  MPI_Comm comm = get_communicator(dof_handler.get_triangulation());
+
+  IndexSet locally_relevant_dofs;
+  DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
+
+  using VectorType = LinearAlgebra::distributed::Vector<double>;
+
+  TrilinosWrappers::SparseMatrix system_matrix;
+  VectorType                     solution;
+  VectorType                     system_rhs;
+
+  TrilinosWrappers::SparsityPattern dsp(dof_handler.locally_owned_dofs(), comm);
+  DoFTools::make_sparsity_pattern(dof_handler, dsp, constraint_matrix);
+  dsp.compress();
+  system_matrix.reinit(dsp);
+
+  solution.reinit(dof_handler.locally_owned_dofs(),
+                  locally_relevant_dofs,
+                  comm);
+  system_rhs.reinit(dof_handler.locally_owned_dofs(),
+                    locally_relevant_dofs,
+                    comm);
 
   // TODO: reduce number of flags
   FEValues<dim, spacedim> fe_values(mapping,
@@ -112,6 +141,9 @@ test(const Triangulation<dim, spacedim> &tria,
 
   for (const auto &cell : dof_handler.cell_iterators())
     {
+      if (!cell->is_locally_owned())
+        continue;
+
       fe_values.reinit(cell);
       cell_matrix = 0;
       cell_rhs    = 0;
@@ -131,21 +163,26 @@ test(const Triangulation<dim, spacedim> &tria,
 
       cell->get_dof_indices(dof_indices);
 
-      constraint_matrix.distribute_local_to_global(cell_matrix,
-                                                   dof_indices,
-                                                   system_matrix);
-
-      constraint_matrix.distribute_local_to_global(cell_rhs,
-                                                   dof_indices,
-                                                   system_rhs);
+      constraint_matrix.distribute_local_to_global(
+        cell_matrix, cell_rhs, dof_indices, system_matrix, system_rhs);
     }
 
-  SolverControl solver_control(1000, 1e-12);
-  SolverCG      solver(solver_control);
+  system_matrix.compress(VectorOperation::add);
+  system_rhs.compress(VectorOperation::add);
+
+  SolverControl        solver_control(1000, 1e-12);
+  SolverCG<VectorType> solver(solver_control);
   solver.solve(system_matrix, solution, system_rhs, PreconditionIdentity());
 
   std::cout << "   " << solver_control.last_step()
             << " CG iterations needed to obtain convergence." << std::endl;
+
+  DataOut<dim> data_out;
+  data_out.attach_dof_handler(dof_handler);
+  data_out.add_data_vector(solution, "solution");
+  data_out.build_patches();
+  std::ofstream output("solution.vtk");
+  data_out.write_vtk(output);
 
   std::cout << std::endl;
 }
