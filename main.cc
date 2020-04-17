@@ -23,6 +23,8 @@
 #include <deal.II/dofs/dof_handler.h>
 
 #include <deal.II/fe/fe_q.h>
+#include <deal.II/fe/fe_values.h>
+#include <deal.II/fe/mapping_q.h>
 
 #include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/grid_in.h>
@@ -31,6 +33,8 @@
 
 #include <deal.II/tet/fe_q.h>
 #include <deal.II/tet/grid_generator.h>
+#include <deal.II/tet/mapping_q.h>
+#include <deal.II/tet/quadrature_lib.h>
 
 using namespace dealii;
 
@@ -56,10 +60,21 @@ struct Parameters
 template <int dim, int spacedim = dim>
 void
 test(const Triangulation<dim, spacedim> &tria,
-     const FiniteElement<dim, spacedim> &fe)
+     const FiniteElement<dim, spacedim> &fe,
+     const Quadrature<dim> &             quad,
+     const Mapping<dim, spacedim> &      mapping)
 {
   DoFHandler<dim, spacedim> dof_handler(tria);
   dof_handler.distribute_dofs(fe);
+
+  FEValues<dim, spacedim> fe_values(mapping,
+                                    fe,
+                                    quad,
+                                    update_quadrature_points |
+                                      update_JxW_values |
+                                      update_contravariant_transformation |
+                                      update_covariant_transformation |
+                                      update_gradients);
 }
 
 template <int dim, int spacedim = dim>
@@ -84,7 +99,7 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
       grid_in.read_ucd(input_file);
     }
 
-  // 2) Output generated triangulation via
+  // 2) Output generated triangulation via GridOut
   GridOut       grid_out;
   std::ofstream out(params.file_name_out + "." +
                     std::to_string(Utilities::MPI::this_mpi_process(comm)) +
@@ -94,8 +109,12 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
   // 3) Select components
   Tet::FE_Q<dim> fe(params.degree);
 
+  Tet::QGauss<dim> quad(params.degree == 1 ? 3 : 7);
+
+  Tet::MappingQ<dim> mapping(1);
+
   // 4) Perform test (independent of mesh type)
-  test(tria, fe);
+  test(tria, fe, quad, mapping);
 }
 
 template <int dim, int spacedim = dim>
@@ -107,7 +126,7 @@ test_quad(const MPI_Comm &comm, const Parameters<dim> &params)
 
   if (params.use_grid_generator)
     {
-      // ...via Tet::GridGenerator
+      // ...via GridGenerator
       GridGenerator::subdivided_hyper_rectangle(
         tria, params.repetitions, params.p1, params.p2, false);
     }
@@ -120,7 +139,7 @@ test_quad(const MPI_Comm &comm, const Parameters<dim> &params)
       grid_in.read_ucd(input_file);
     }
 
-  // 2) Output generated triangulation via
+  // 2) Output generated triangulation via GridOut
   GridOut       grid_out;
   std::ofstream out(params.file_name_out + "." +
                     std::to_string(Utilities::MPI::this_mpi_process(comm)) +
@@ -130,8 +149,12 @@ test_quad(const MPI_Comm &comm, const Parameters<dim> &params)
   // 3) Select components
   FE_Q<dim> fe(params.degree);
 
+  QGauss<dim> quad(params.degree + 1);
+
+  MappingQ<dim, spacedim> mapping(1);
+
   // 4) Perform test (independent of mesh type)
-  test(tria, fe);
+  test(tria, fe, quad, mapping);
 }
 
 int
