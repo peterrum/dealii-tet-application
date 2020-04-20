@@ -177,12 +177,18 @@ test(const Triangulation<dim, spacedim> &tria,
   std::cout << "   " << solver_control.last_step()
             << " CG iterations needed to obtain convergence." << std::endl;
 
-  DataOut<dim> data_out;
-  data_out.attach_dof_handler(dof_handler);
-  data_out.add_data_vector(solution, "solution");
-  data_out.build_patches();
-  std::ofstream output("solution.vtk");
-  data_out.write_vtk(output);
+  system_rhs.print(std::cout);
+  solution.print(std::cout);
+
+  if (dynamic_cast<const Tet::Triangulation<dim, spacedim> *>(&tria) == nullptr)
+    {
+      DataOut<dim> data_out;
+      data_out.attach_dof_handler(dof_handler);
+      data_out.add_data_vector(solution, "solution");
+      data_out.build_patches();
+      std::ofstream output("solution.vtk");
+      data_out.write_vtk(output);
+    }
 
   std::cout << std::endl;
 }
@@ -275,7 +281,7 @@ main(int argc, char **argv)
   // setup parameters: TODO move to json file
   Parameters<2> params;
   params.use_grid_generator = true;
-  params.repetitions        = std::vector<unsigned int>{3, 3};
+  params.repetitions        = std::vector<unsigned int>{4, 4};
 
   const MPI_Comm comm = MPI_COMM_WORLD;
 
@@ -292,7 +298,7 @@ main(int argc, char **argv)
     test_tet(comm, params);
   }
 
-  // test QUAD
+  // test HEX
   {
     pcout << "Solve problem on QUAD mesh:" << std::endl;
 
