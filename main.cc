@@ -272,7 +272,7 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
 
 template <int dim, int spacedim = dim>
 void
-test_quad(const MPI_Comm &comm, const Parameters<dim> &params)
+test_hex(const MPI_Comm &comm, const Parameters<dim> &params)
 {
   // 1) Create triangulation...
   parallel::distributed::Triangulation<dim, spacedim> tria(comm);
@@ -342,6 +342,6 @@ main(int argc, char **argv)
     params.file_name_out = "mesh-quad";
     params.p1            = Point<2>(1.1, 0); // shift to the right for
     params.p2            = Point<2>(2.1, 1); // visualization purposes
-    test_quad(comm, params);
+    test_hex(comm, params);
   }
 }
