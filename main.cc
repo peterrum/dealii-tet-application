@@ -191,7 +191,7 @@ test(const Triangulation<dim, spacedim> &tria,
 
 template <int dim, int spacedim>
 void
-partition_triangulation(unsigned                           n_part,
+partition_triangulation(const unsigned                     n_part,
                         Tet::Triangulation<dim, spacedim> &tria)
 {
   // determine number of cells (TODO)
