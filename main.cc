@@ -99,7 +99,7 @@ test(const Triangulation<dim, spacedim> &tria,
   DoFTools::make_zero_boundary_constraints(dof_handler, constraint_matrix);
   constraint_matrix.close();
 
-  MPI_Comm comm = get_communicator(dof_handler.get_triangulation());
+  const MPI_Comm comm = get_communicator(dof_handler.get_triangulation());
 
   IndexSet locally_relevant_dofs;
   DoFTools::extract_locally_relevant_dofs(dof_handler, locally_relevant_dofs);
@@ -122,15 +122,8 @@ test(const Triangulation<dim, spacedim> &tria,
                     locally_relevant_dofs,
                     comm);
 
-  // TODO: reduce number of flags
-  FEValues<dim, spacedim> fe_values(mapping,
-                                    fe,
-                                    quad,
-                                    update_quadrature_points |
-                                      update_JxW_values |
-                                      update_contravariant_transformation |
-                                      update_covariant_transformation |
-                                      update_values | update_gradients);
+  const UpdateFlags flag = update_JxW_values | update_values | update_gradients;
+  FEValues<dim, spacedim> fe_values(mapping, fe, quad, flag);
 
   const unsigned int dofs_per_cell = fe.dofs_per_cell;
   const unsigned int n_q_points    = quad.size();
