@@ -55,7 +55,7 @@ using namespace dealii;
 template <int dim>
 struct Parameters
 {
-  unsigned int degree = 1;
+  unsigned int degree = 2;
 
 
   // GridGenerator
@@ -140,12 +140,21 @@ namespace dealii
 
       std::vector<Point<spacedim>> all_points(n_dofs);
 
-      const UpdateFlags       flag = update_quadrature_points;
-      FEValues<dim, spacedim> fe_values(mapping, fe, quad, flag);
+      const UpdateFlags flag = update_quadrature_points;
 
       std::vector<types::global_dof_index> dof_indices(dofs_per_cell);
 
       unsigned int n_cells = 0;
+
+      auto global_to_local = [&](const types::global_dof_index index) {
+        if (is_local.is_element(index))
+          return is_local.index_within_set(index);
+
+        if (is_ghost.is_element(index))
+          return is_ghost.index_within_set(index) + is_local.n_elements();
+
+        Assert(false, ExcNotImplemented());
+      };
 
       // prepare points
       for (const auto &cell : dof_handler.cell_iterators())
@@ -155,6 +164,7 @@ namespace dealii
 
           n_cells++;
 
+          FEValues<dim, spacedim> fe_values(mapping, fe, quad, flag);
           fe_values.reinit(cell);
 
           cell->get_dof_indices(dof_indices);
@@ -162,7 +172,7 @@ namespace dealii
           const auto &points = fe_values.get_quadrature_points();
 
           for (unsigned int i = 0; i < dofs_per_cell; i++)
-            all_points[dof_indices[i]] = points[i];
+            all_points[global_to_local(dof_indices[i])] = points[i];
         }
 
       stream << "# vtk DataFile Version 2.0" << std::endl;
@@ -188,6 +198,7 @@ namespace dealii
           if (!cell->is_locally_owned())
             continue;
 
+          FEValues<dim, spacedim> fe_values(mapping, fe, quad, flag);
           fe_values.reinit(cell);
 
           cell->get_dof_indices(dof_indices);
@@ -195,7 +206,7 @@ namespace dealii
           stream << dofs_per_cell << " ";
 
           for (unsigned int i = 0; i < dofs_per_cell; i++)
-            stream << dof_indices[i] << " ";
+            stream << global_to_local(dof_indices[i]) << " ";
 
           stream << std::endl;
         }
@@ -218,8 +229,8 @@ namespace dealii
       stream << "SCALARS " << label << " double 1" << std::endl;
       stream << "LOOKUP_TABLE default" << std::endl;
 
-      for (auto i : vector)
-        stream << i << std::endl;
+      for (unsigned int i = 0; i < n_dofs; ++i)
+        stream << vector.local_element(i) << std::endl;
     }
   } // namespace Tet
 } // namespace dealii
@@ -335,14 +346,18 @@ test(const Triangulation<dim, spacedim> &tria,
       data_out.attach_dof_handler(dof_handler);
       data_out.add_data_vector(solution, "solution");
       data_out.build_patches();
-      std::ofstream output("solution.vtk");
+      std::ofstream output(
+        "solution." + std::to_string(Utilities::MPI::this_mpi_process(comm)) +
+        ".vtk");
       data_out.write_vtk(output);
     }
   else
     {
       solution.update_ghost_values();
 
-      std::ofstream output("solution_tet.vtk");
+      std::ofstream output(
+        "solution_tet." +
+        std::to_string(Utilities::MPI::this_mpi_process(comm)) + ".vtk");
       Tet::data_out(dof_handler, solution, "solution", output);
     }
 
