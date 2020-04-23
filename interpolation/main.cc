@@ -44,6 +44,7 @@
 #include <deal.II/lac/trilinos_sparsity_pattern.h>
 
 #include <deal.II/numerics/data_out.h>
+#include <deal.II/numerics/vector_tools.h>
 
 #include <deal.II/tet/fe_q.h>
 #include <deal.II/tet/grid_generator.h>
@@ -88,19 +89,31 @@ get_communicator(const Triangulation<dim, spacedim> &tria)
   return MPI_COMM_SELF;
 }
 
+template <int dim>
+class LinearFunction : public Function<dim>
+{
+public:
+  LinearFunction()
+  {}
+
+  virtual double
+  value(const Point<dim> &p, const unsigned int component = 0) const
+  {
+    (void)component;
+
+    // return p[0] <=1.05 ? p[0] : (p[0]-1.1);
+    return p[1];
+  }
+};
+
 template <int dim, int spacedim = dim>
 void
 test(const Triangulation<dim, spacedim> &tria,
      const FiniteElement<dim, spacedim> &fe,
-     const Quadrature<dim> &             quad,
      const Mapping<dim, spacedim> &      mapping)
 {
   DoFHandler<dim, spacedim> dof_handler(tria);
   dof_handler.distribute_dofs(fe);
-
-  AffineConstraints constraint_matrix;
-  DoFTools::make_zero_boundary_constraints(dof_handler, constraint_matrix);
-  constraint_matrix.close();
 
   const MPI_Comm comm = get_communicator(dof_handler.get_triangulation());
 
@@ -109,72 +122,18 @@ test(const Triangulation<dim, spacedim> &tria,
 
   using VectorType = LinearAlgebra::distributed::Vector<double>;
 
-  TrilinosWrappers::SparseMatrix system_matrix;
-  VectorType                     solution;
-  VectorType                     system_rhs;
-
-  TrilinosWrappers::SparsityPattern dsp(dof_handler.locally_owned_dofs(), comm);
-  DoFTools::make_sparsity_pattern(dof_handler, dsp, constraint_matrix);
-  dsp.compress();
-  system_matrix.reinit(dsp);
+  VectorType solution;
 
   solution.reinit(dof_handler.locally_owned_dofs(),
                   locally_relevant_dofs,
                   comm);
-  system_rhs.reinit(dof_handler.locally_owned_dofs(),
-                    locally_relevant_dofs,
-                    comm);
 
-  const UpdateFlags flag = update_JxW_values | update_values | update_gradients;
-  FEValues<dim, spacedim> fe_values(mapping, fe, quad, flag);
-
-  const unsigned int dofs_per_cell = fe.dofs_per_cell;
-  const unsigned int n_q_points    = quad.size();
-
-  std::vector<types::global_dof_index> dof_indices(dofs_per_cell);
-  FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
-  Vector<double>     cell_rhs(dofs_per_cell);
-
-  for (const auto &cell : dof_handler.cell_iterators())
-    {
-      if (!cell->is_locally_owned())
-        continue;
-
-      fe_values.reinit(cell);
-      cell_matrix = 0;
-      cell_rhs    = 0;
-
-      for (unsigned int q_index = 0; q_index < n_q_points; ++q_index)
-        for (unsigned int i = 0; i < dofs_per_cell; ++i)
-          {
-            for (unsigned int j = 0; j < dofs_per_cell; ++j)
-              cell_matrix(i, j) +=
-                (fe_values.shape_grad(i, q_index) * // grad phi_i(x_q)
-                 fe_values.shape_grad(j, q_index) * // grad phi_j(x_q)
-                 fe_values.JxW(q_index));           // dx
-            cell_rhs(i) += (fe_values.shape_value(i, q_index) * // phi_i(x_q)
-                            1.0 *                               // 1.0
-                            fe_values.JxW(q_index));            // dx
-          }
-
-      cell->get_dof_indices(dof_indices);
-
-      constraint_matrix.distribute_local_to_global(
-        cell_matrix, cell_rhs, dof_indices, system_matrix, system_rhs);
-    }
-
-  system_matrix.compress(VectorOperation::add);
-  system_rhs.compress(VectorOperation::add);
-
-  SolverControl        solver_control(1000, 1e-12);
-  SolverCG<VectorType> solver(solver_control);
-  solver.solve(system_matrix, solution, system_rhs, PreconditionIdentity());
-
-  std::cout << "   " << solver_control.last_step()
-            << " CG iterations needed to obtain convergence." << std::endl;
-
-  system_rhs.print(std::cout);
-  solution.print(std::cout);
+  // VectorTools::interpolate(mapping, dof_handler,  ConstantFunction<dim>(2),
+  // solution);
+  VectorTools::interpolate(mapping,
+                           dof_handler,
+                           LinearFunction<dim>(),
+                           solution);
 
   if (dynamic_cast<const Tet::Triangulation<dim, spacedim> *>(&tria) == nullptr)
     {
@@ -203,8 +162,6 @@ test(const Triangulation<dim, spacedim> &tria,
         std::to_string(Utilities::MPI::this_mpi_process(comm)) + ".vtk");
       Tet::data_out(dof_handler, solution, "solution", output);
     }
-
-  std::cout << std::endl;
 }
 
 template <int dim, int spacedim>
@@ -280,12 +237,10 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
   // 3) Select components
   Tet::FE_Q<dim> fe(params.degree);
 
-  Tet::QGauss<dim> quad(params.degree == 1 ? 3 : 7);
-
   Tet::MappingQ<dim> mapping(1);
 
   // 4) Perform test (independent of mesh type)
-  test(tria, fe, quad, mapping);
+  test(tria, fe, mapping);
 }
 
 template <int dim, int spacedim = dim>
@@ -320,12 +275,10 @@ test_hex(const MPI_Comm &comm, const Parameters<dim> &params)
   // 3) Select components
   FE_Q<dim> fe(params.degree);
 
-  QGauss<dim> quad(params.degree + 1);
-
   MappingQ<dim, spacedim> mapping(1);
 
   // 4) Perform test (independent of mesh type)
-  test(tria, fe, quad, mapping);
+  test(tria, fe, mapping);
 }
 
 int
