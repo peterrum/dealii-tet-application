@@ -1,0 +1,4 @@
+SET(TARGET_SRC main.cc)
+ADD_EXECUTABLE( "poisson" ${TARGET_SRC})
+DEAL_II_SETUP_TARGET("poisson")
+TARGET_LINK_LIBRARIES("poisson" "ceed")

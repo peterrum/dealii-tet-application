@@ -341,11 +341,16 @@ test(const Triangulation<dim, spacedim> &tria,
   if (dynamic_cast<const Tet::Triangulation<dim, spacedim> *>(&tria) == nullptr)
     {
       solution.update_ghost_values();
+      
+      DataOutBase::VtkFlags flags;
+      flags.write_higher_order_cells = true;
 
       DataOut<dim> data_out;
+      data_out.set_flags(flags);
       data_out.attach_dof_handler(dof_handler);
       data_out.add_data_vector(solution, "solution");
-      data_out.build_patches();
+      //data_out.build_patches();
+      data_out.build_patches(mapping, fe.degree);
       std::ofstream output(
         "solution." + std::to_string(Utilities::MPI::this_mpi_process(comm)) +
         ".vtk");
@@ -490,33 +495,56 @@ main(int argc, char **argv)
 {
   Utilities::MPI::MPI_InitFinalize mpi(argc, argv, 1);
 
-  // setup parameters: TODO move to json file
-  Parameters<2> params;
-  params.use_grid_generator = true;
-  params.repetitions        = std::vector<unsigned int>{20, 20};
-
   const MPI_Comm comm = MPI_COMM_WORLD;
 
   ConditionalOStream pcout(std::cout,
                            Utilities::MPI::this_mpi_process(comm) == 0);
 
-  // test TET
+  // 2D
+  if constexpr(true)
   {
-    pcout << "Solve problem on TET mesh:" << std::endl;
+    // setup parameters: TODO move to json file
+    Parameters<2> params;
+    params.use_grid_generator = true;
+    params.repetitions        = std::vector<unsigned int>{20, 20};
 
-    params.file_name_out = "mesh-tet";
-    params.p1            = Point<2>(0, 0);
-    params.p2            = Point<2>(1, 1);
-    test_tet(comm, params);
+    // test TRI
+    {
+      pcout << "Solve problem on TRI mesh:" << std::endl;
+
+      params.file_name_out = "mesh-tri";
+      params.p1            = Point<2>(0, 0);
+      params.p2            = Point<2>(1, 1);
+      test_tet(comm, params);
+    }
+
+    // test HEX
+    {
+      pcout << "Solve problem on QUAD mesh:" << std::endl;
+
+      params.file_name_out = "mesh-quad";
+      params.p1            = Point<2>(1.1, 0); // shift to the right for
+      params.p2            = Point<2>(2.1, 1); // visualization purposes
+      test_hex(comm, params);
+    }
   }
 
-  // test HEX
+  // 3D
+  if constexpr(false)
   {
-    pcout << "Solve problem on QUAD mesh:" << std::endl;
+    // setup parameters: TODO move to json file
+    Parameters<3> params;
+    params.use_grid_generator = true;
+    params.repetitions        = std::vector<unsigned int>{2, 2, 2};
 
-    params.file_name_out = "mesh-quad";
-    params.p1            = Point<2>(1.1, 0); // shift to the right for
-    params.p2            = Point<2>(2.1, 1); // visualization purposes
-    test_hex(comm, params);
+    // test TET
+    {
+      pcout << "Solve problem on TET mesh:" << std::endl;
+
+      params.file_name_out = "mesh-tet";
+      params.p1            = Point<3>(0, 0, 0);
+      params.p2            = Point<3>(1, 1, 1);
+      test_tet(comm, params);
+    }
   }
 }
