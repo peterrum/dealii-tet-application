@@ -51,6 +51,7 @@
 #include <deal.II/tet/quadrature_lib.h>
 
 #include "../include/data_out.h"
+#include "../include/partition.h"
 
 using namespace dealii;
 
@@ -187,7 +188,6 @@ test(const Triangulation<dim, spacedim> &tria,
       data_out.set_flags(flags);
       data_out.attach_dof_handler(dof_handler);
       data_out.add_data_vector(solution, "solution");
-      // data_out.build_patches();
       data_out.build_patches(mapping, fe.degree);
       std::ofstream output(
         "solution." + std::to_string(Utilities::MPI::this_mpi_process(comm)) +
@@ -196,6 +196,7 @@ test(const Triangulation<dim, spacedim> &tria,
     }
   else
     {
+      // TODO: use DataOut
       solution.update_ghost_values();
 
       std::ofstream output(
@@ -205,44 +206,6 @@ test(const Triangulation<dim, spacedim> &tria,
     }
 
   std::cout << std::endl;
-}
-
-template <int dim, int spacedim>
-void
-partition_triangulation(const unsigned                     n_part,
-                        Tet::Triangulation<dim, spacedim> &tria)
-{
-  // determine number of cells (TODO)
-  const unsigned int n_cells = std::distance(tria.begin(), tria.end());
-
-  // determine number of cells per process
-  const unsigned int n_cells_per_proc = (n_cells + n_part - 1) / n_part;
-
-  // partition mesh
-  unsigned int counter = 0;
-  for (const auto &cell : tria.cell_iterators())
-    cell->set_subdomain_id(counter++ / n_cells_per_proc);
-
-  // collect vertices of locally owned cells
-  std::vector<bool> vertex_of_own_cell(tria.n_vertices(), false);
-  for (const auto &cell : tria.active_cell_iterators())
-    if (cell->is_locally_owned())
-      for (unsigned int v = 0; v < 3 /*TODO*/; v++)
-        vertex_of_own_cell[cell->vertex_index(v)] = true;
-
-  // clear artificial cells
-  for (const auto &cell : tria.cell_iterators())
-    {
-      const auto temp = cell->subdomain_id();
-      cell->set_subdomain_id(numbers::artificial_subdomain_id);
-
-      for (unsigned int v = 0; v < 3 /*TODO*/; v++)
-        if (vertex_of_own_cell[cell->vertex_index(v)])
-          {
-            cell->set_subdomain_id(temp);
-            break;
-          }
-    }
 }
 
 template <int dim, int spacedim = dim>
@@ -267,8 +230,8 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
       grid_in.read_ucd(input_file);
     }
 
-  // ... partition it
-  partition_triangulation(Utilities::MPI::n_mpi_processes(comm), tria);
+  // ... partition it (TODO - use the GridTools::partition_triangulation)
+  Tet::partition_triangulation(Utilities::MPI::n_mpi_processes(comm), tria);
 
   // 2) Output generated triangulation via GridOut
   GridOut       grid_out;
@@ -344,7 +307,7 @@ main(int argc, char **argv)
       // setup parameters: TODO move to json file
       Parameters<2> params;
       params.use_grid_generator = true;
-      params.repetitions        = std::vector<unsigned int>{20, 20};
+      params.repetitions        = std::vector<unsigned int>{8, 8};
 
       // test TRI
       {

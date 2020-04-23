@@ -7,51 +7,6 @@ namespace dealii
 {
   namespace Tet
   {
-    template <int dim>
-    class QGaussHelper : public Quadrature<dim>
-    {
-    public:
-      QGaussHelper(const unsigned int n_points)
-      {
-        this->weights.resize(n_points);
-
-        if (dim == 2)
-          {
-            if (n_points == 3) // DRT::Element::tri3 (TODO: change order)
-              {
-                this->quadrature_points.emplace_back(1.0, 0.0);
-                this->quadrature_points.emplace_back(0.0, 1.0);
-                this->quadrature_points.emplace_back(0.0, 0.0);
-              }
-            else if (n_points == 6) // DRT::Element::tri6
-              {
-                this->quadrature_points.emplace_back(1.0, 0.0);
-                this->quadrature_points.emplace_back(0.0, 1.0);
-                this->quadrature_points.emplace_back(0.0, 0.0);
-                this->quadrature_points.emplace_back(0.5, 0.5);
-                this->quadrature_points.emplace_back(0.0, 0.5);
-                this->quadrature_points.emplace_back(0.5, 0.0);
-              }
-            else
-              {
-                Assert(false, ExcNotImplemented());
-              }
-          }
-        else if (dim == 3)
-          {
-            Assert(false, ExcNotImplemented());
-          }
-        else
-          {
-            Assert(false, ExcNotImplemented());
-          }
-
-        AssertDimension(this->quadrature_points.size(), this->weights.size());
-        Assert(this->quadrature_points.size() > 0,
-               ExcMessage("No valid quadrature points!"));
-      }
-    };
-
     template <int dim, int spacedim, typename VectorType, typename StreamType>
     void
     data_out(const DoFHandler<dim, spacedim> &dof_handler,
@@ -67,8 +22,8 @@ namespace dealii
       const auto &       fe            = dof_handler.get_fe();
       const unsigned int dofs_per_cell = fe.dofs_per_cell;
 
-      const QGaussHelper<dim> quad(dofs_per_cell);
-      const MappingQ<dim>     mapping(1);
+      const Quadrature<dim> quad(fe.get_unit_support_points());
+      const MappingQ<dim>   mapping(1);
 
       std::vector<Point<spacedim>> all_points(n_dofs);
 
