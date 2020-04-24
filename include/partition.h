@@ -10,7 +10,8 @@ namespace dealii
     template <int dim, int spacedim>
     void
     partition_triangulation(const unsigned                     n_part,
-                            Tet::Triangulation<dim, spacedim> &tria)
+                            Tet::Triangulation<dim, spacedim> &tria,
+                            const bool distributed_mesh = true)
     {
       // determine number of cells (TODO)
       const unsigned int n_cells = std::distance(tria.begin(), tria.end());
@@ -22,6 +23,9 @@ namespace dealii
       unsigned int counter = 0;
       for (const auto &cell : tria.cell_iterators())
         cell->set_subdomain_id(counter++ / n_cells_per_proc);
+
+      if (distributed_mesh == false)
+        return;
 
       // collect vertices of locally owned cells
       std::vector<bool> vertex_of_own_cell(tria.n_vertices(), false);

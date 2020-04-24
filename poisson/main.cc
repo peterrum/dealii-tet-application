@@ -66,6 +66,7 @@ struct Parameters
   std::vector<unsigned int> repetitions;
   Point<dim>                p1;
   Point<dim>                p2;
+  bool                      distribute_mesh;
 
   // GridIn
   std::string file_name_in = "";
@@ -213,7 +214,7 @@ void
 test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
 {
   // 1) Create triangulation...
-  Tet::Triangulation<dim, spacedim> tria(comm);
+  Tet::Triangulation<dim, spacedim> tria(comm, params.distribute_mesh);
 
   if (params.use_grid_generator)
     {
@@ -231,7 +232,9 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
     }
 
   // ... partition it (TODO - use the GridTools::partition_triangulation)
-  Tet::partition_triangulation(Utilities::MPI::n_mpi_processes(comm), tria);
+  Tet::partition_triangulation(Utilities::MPI::n_mpi_processes(comm),
+                               tria,
+                               params.distribute_mesh);
 
   // 2) Output generated triangulation via GridOut
   GridOut       grid_out;
@@ -308,6 +311,7 @@ main(int argc, char **argv)
       Parameters<2> params;
       params.use_grid_generator = true;
       params.repetitions        = std::vector<unsigned int>{8, 8};
+      params.distribute_mesh    = false;
 
       // test TRI
       {
@@ -337,6 +341,7 @@ main(int argc, char **argv)
       Parameters<3> params;
       params.use_grid_generator = true;
       params.repetitions        = std::vector<unsigned int>{2, 2, 2};
+      params.distribute_mesh    = true;
 
       // test TET
       {
