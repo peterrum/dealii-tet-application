@@ -105,6 +105,10 @@ namespace dealii
           return 5;
         if (dim == 2 && dofs_per_cell == 6)
           return 22;
+        if (dim == 3 && dofs_per_cell == 4)
+          return 10;
+        if (dim == 3 && dofs_per_cell == 10)
+          return 24;
 
         Assert(false, ExcNotImplemented());
       }(dofs_per_cell);

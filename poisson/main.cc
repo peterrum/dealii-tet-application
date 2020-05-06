@@ -104,6 +104,8 @@ test(const Triangulation<dim, spacedim> &tria,
   DoFTools::make_zero_boundary_constraints(dof_handler, constraint_matrix);
   constraint_matrix.close();
 
+  // constraint_matrix.print(std::cout);
+
   const MPI_Comm comm = get_communicator(dof_handler.get_triangulation());
 
   IndexSet locally_relevant_dofs;
@@ -161,6 +163,10 @@ test(const Triangulation<dim, spacedim> &tria,
 
       cell->get_dof_indices(dof_indices);
 
+      // for(auto i : cell_rhs)
+      //    std::cout << i << " ";
+      // std::cout << std::endl;
+
       constraint_matrix.distribute_local_to_global(
         cell_matrix, cell_rhs, dof_indices, system_matrix, system_rhs);
     }
@@ -175,8 +181,8 @@ test(const Triangulation<dim, spacedim> &tria,
   std::cout << "   " << solver_control.last_step()
             << " CG iterations needed to obtain convergence." << std::endl;
 
-  system_rhs.print(std::cout);
-  solution.print(std::cout);
+  // system_rhs.print(std::cout);
+  // solution.print(std::cout);
 
   if (dynamic_cast<const Tet::Triangulation<dim, spacedim> *>(&tria) == nullptr)
     {
@@ -221,6 +227,11 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
       // ...via Tet::GridGenerator
       Tet::GridGenerator::subdivided_hyper_rectangle(
         tria, params.repetitions, params.p1, params.p2, false);
+      // Triangulation<dim, spacedim> tria_hex;
+      // GridGenerator::subdivided_hyper_rectangle(tria_hex, params.repetitions,
+      // params.p1, params.p2, false);
+      //
+      // Tet::GridGenerator::hex_to_tet_grid(tria_hex, tria);
     }
   else
     {
@@ -246,7 +257,8 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
   // 3) Select components
   Tet::FE_Q<dim> fe(params.degree);
 
-  Tet::QGauss<dim> quad(params.degree == 1 ? 3 : 7);
+  Tet::QGauss<dim> quad(dim == 2 ? (params.degree == 1 ? 3 : 7) :
+                                   (params.degree == 1 ? 4 : 10));
 
   Tet::MappingQ<dim> mapping(1);
 
@@ -335,13 +347,14 @@ main(int argc, char **argv)
     }
 
   // 3D
-  if constexpr (false)
+  if constexpr (true)
     {
       // setup parameters: TODO move to json file
       Parameters<3> params;
       params.use_grid_generator = true;
-      params.repetitions        = std::vector<unsigned int>{2, 2, 2};
+      params.repetitions        = std::vector<unsigned int>{10, 10, 10};
       params.distribute_mesh    = true;
+      // params.degree    = 1;
 
       // test TET
       {
@@ -351,6 +364,15 @@ main(int argc, char **argv)
         params.p1            = Point<3>(0, 0, 0);
         params.p2            = Point<3>(1, 1, 1);
         test_tet(comm, params);
+      }
+
+      {
+        pcout << "Solve problem on TET mesh:" << std::endl;
+
+        params.file_name_out = "mesh-hex";
+        params.p1            = Point<3>(1.1, 0, 0);
+        params.p2            = Point<3>(2.1, 1, 1);
+        test_hex(comm, params);
       }
     }
 }
