@@ -353,7 +353,8 @@ main(int argc, char **argv)
       Parameters<3> params;
       params.use_grid_generator = true;
       params.repetitions        = std::vector<unsigned int>{10, 10, 10};
-      params.distribute_mesh    = true;
+      params.distribute_mesh =
+        false; // TODO: bug in distributed dofhandler policy
       // params.degree    = 1;
 
       // test TET

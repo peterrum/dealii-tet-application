@@ -66,7 +66,8 @@ main(int argc, char **argv)
     {
       Tet::Triangulation<2, 2> tria(comm, true);
 
-      std::vector<unsigned int> reps{atoi(argv[1]), atoi(argv[2])};
+      std::vector<unsigned int> reps{static_cast<unsigned int>(atoi(argv[1])),
+                                     static_cast<unsigned int>(atoi(argv[2]))};
       Point<2>                  p1(0, 0);
       Point<2>                  p2(1, 1);
 
@@ -84,7 +85,7 @@ main(int argc, char **argv)
       Tet::Triangulation<3, 3> tria(comm, true);
 
       // clang-format off
-      std::vector<unsigned int> reps{atoi(argv[1]), atoi(argv[2]), atoi(argv[3])};
+      std::vector<unsigned int> reps{static_cast<unsigned int>(atoi(argv[1])), static_cast<unsigned int>(atoi(argv[2])), static_cast<unsigned int>(atoi(argv[3]))};
       Point<3>                  p1(0, 0, 0);
       Point<3>                  p2(1, 1, 1);
       // clang-format on
