@@ -21,10 +21,10 @@
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/mpi.h>
 
+#include <deal.II/distributed/tria.h>
+
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_tools.h>
-
-#include <deal.II/distributed/tria.h>
 
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_values.h>
@@ -181,15 +181,15 @@ test(const Triangulation<dim, spacedim> &tria,
   // system_rhs.print(std::cout);
   // solution.print(std::cout);
 
-    {
-      // TODO: use DataOut
-      solution.update_ghost_values();
+  {
+    // TODO: use DataOut
+    solution.update_ghost_values();
 
-      std::ofstream output(
-        "solution_tet." +
-        std::to_string(Utilities::MPI::this_mpi_process(comm)) + ".vtk");
-      Tet::data_out(dof_handler, solution, "solution", output);
-    }
+    std::ofstream output(
+      "solution_tet." + std::to_string(Utilities::MPI::this_mpi_process(comm)) +
+      ".vtk");
+    Tet::data_out(dof_handler, solution, "solution", output);
+  }
 
   std::cout << std::endl;
 }
@@ -222,7 +222,7 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
     }
 
   // ... partition it (TODO - use the GridTools::partition_triangulation)
-  //Tet::partition_triangulation(Utilities::MPI::n_mpi_processes(comm),
+  // Tet::partition_triangulation(Utilities::MPI::n_mpi_processes(comm),
   //                             tria,
   //                             params.distribute_mesh);
 
@@ -296,61 +296,61 @@ main(int argc, char **argv)
                            Utilities::MPI::this_mpi_process(comm) == 0);
 
   // 2D
+  {
+    // setup parameters: TODO move to json file
+    Parameters<2> params;
+    params.use_grid_generator = true;
+    params.repetitions        = std::vector<unsigned int>{8, 8};
+    params.distribute_mesh    = false;
+
+    // test TRI
     {
-      // setup parameters: TODO move to json file
-      Parameters<2> params;
-      params.use_grid_generator = true;
-      params.repetitions        = std::vector<unsigned int>{8, 8};
-      params.distribute_mesh    = false;
+      pcout << "Solve problem on TRI mesh:" << std::endl;
 
-      // test TRI
-      {
-        pcout << "Solve problem on TRI mesh:" << std::endl;
-
-        params.file_name_out = "mesh-tri";
-        params.p1            = Point<2>(0, 0);
-        params.p2            = Point<2>(1, 1);
-        test_tet(comm, params);
-      }
-
-      // test HEX
-      {
-        pcout << "Solve problem on QUAD mesh:" << std::endl;
-
-        params.file_name_out = "mesh-quad";
-        params.p1            = Point<2>(1.1, 0); // shift to the right for
-        params.p2            = Point<2>(2.1, 1); // visualization purposes
-        test_hex(comm, params);
-      }
+      params.file_name_out = "mesh-tri";
+      params.p1            = Point<2>(0, 0);
+      params.p2            = Point<2>(1, 1);
+      test_tet(comm, params);
     }
+
+    // test HEX
+    {
+      pcout << "Solve problem on QUAD mesh:" << std::endl;
+
+      params.file_name_out = "mesh-quad";
+      params.p1            = Point<2>(1.1, 0); // shift to the right for
+      params.p2            = Point<2>(2.1, 1); // visualization purposes
+      test_hex(comm, params);
+    }
+  }
 
   // 3D
+  {
+    // setup parameters: TODO move to json file
+    Parameters<3> params;
+    params.use_grid_generator = true;
+    params.repetitions        = std::vector<unsigned int>{10, 10, 10};
+    params.distribute_mesh =
+      false; // TODO: bug in distributed dofhandler policy
+    // params.degree    = 1;
+
+    // test TET
     {
-      // setup parameters: TODO move to json file
-      Parameters<3> params;
-      params.use_grid_generator = true;
-      params.repetitions        = std::vector<unsigned int>{10, 10, 10};
-      params.distribute_mesh =
-        false; // TODO: bug in distributed dofhandler policy
-      // params.degree    = 1;
+      pcout << "Solve problem on TET mesh:" << std::endl;
 
-      // test TET
-      {
-        pcout << "Solve problem on TET mesh:" << std::endl;
-
-        params.file_name_out = "mesh-tet";
-        params.p1            = Point<3>(0, 0, 0);
-        params.p2            = Point<3>(1, 1, 1);
-        test_tet(comm, params);
-      }
-
-      {
-        pcout << "Solve problem on TET mesh:" << std::endl;
-
-        params.file_name_out = "mesh-hex";
-        params.p1            = Point<3>(1.1, 0, 0);
-        params.p2            = Point<3>(2.1, 1, 1);
-        test_hex(comm, params);
-      }
+      params.file_name_out = "mesh-tet";
+      params.p1            = Point<3>(0, 0, 0);
+      params.p2            = Point<3>(1, 1, 1);
+      test_tet(comm, params);
     }
+
+    {
+      pcout << "Solve problem on TET mesh:" << std::endl;
+
+      params.file_name_out = "mesh-hex";
+      params.p1            = Point<3>(1.1, 0, 0);
+      params.p2            = Point<3>(2.1, 1, 1);
+      test_hex(comm, params);
+    }
+  }
 }
