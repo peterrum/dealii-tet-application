@@ -24,6 +24,8 @@
 #include <deal.II/dofs/dof_handler.h>
 #include <deal.II/dofs/dof_tools.h>
 
+#include <deal.II/distributed/tria.h>
+
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_values.h>
 #include <deal.II/fe/mapping_q.h>
@@ -34,6 +36,7 @@
 #include <deal.II/grid/grid_tools.h>
 #include <deal.II/grid/tria.h>
 
+#include <deal.II/lac/affine_constraints.h>
 #include <deal.II/lac/dynamic_sparsity_pattern.h>
 #include <deal.II/lac/full_matrix.h>
 #include <deal.II/lac/la_parallel_vector.h>
@@ -45,13 +48,11 @@
 
 #include <deal.II/numerics/data_out.h>
 
+#include <deal.II/tet/data_out.h>
 #include <deal.II/tet/fe_q.h>
 #include <deal.II/tet/grid_generator.h>
 #include <deal.II/tet/mapping_q.h>
 #include <deal.II/tet/quadrature_lib.h>
-
-#include "../include/data_out.h"
-#include "../include/partition.h"
 
 using namespace dealii;
 
@@ -83,10 +84,6 @@ get_communicator(const Triangulation<dim, spacedim> &tria)
         dynamic_cast<const parallel::TriangulationBase<dim, spacedim> *>(&tria))
     return tria_->get_communicator();
 
-  if (auto tria_ =
-        dynamic_cast<const Tet::Triangulation<dim, spacedim> *>(&tria))
-    return tria_->get_communicator();
-
   return MPI_COMM_SELF;
 }
 
@@ -100,7 +97,7 @@ test(const Triangulation<dim, spacedim> &tria,
   DoFHandler<dim, spacedim> dof_handler(tria);
   dof_handler.distribute_dofs(fe);
 
-  AffineConstraints constraint_matrix;
+  AffineConstraints<double> constraint_matrix;
   DoFTools::make_zero_boundary_constraints(dof_handler, constraint_matrix);
   constraint_matrix.close();
 
@@ -184,24 +181,6 @@ test(const Triangulation<dim, spacedim> &tria,
   // system_rhs.print(std::cout);
   // solution.print(std::cout);
 
-  if (dynamic_cast<const Tet::Triangulation<dim, spacedim> *>(&tria) == nullptr)
-    {
-      solution.update_ghost_values();
-
-      DataOutBase::VtkFlags flags;
-      flags.write_higher_order_cells = true;
-
-      DataOut<dim> data_out;
-      data_out.set_flags(flags);
-      data_out.attach_dof_handler(dof_handler);
-      data_out.add_data_vector(solution, "solution");
-      data_out.build_patches(mapping, fe.degree);
-      std::ofstream output(
-        "solution." + std::to_string(Utilities::MPI::this_mpi_process(comm)) +
-        ".vtk");
-      data_out.write_vtk(output);
-    }
-  else
     {
       // TODO: use DataOut
       solution.update_ghost_values();
@@ -220,7 +199,7 @@ void
 test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
 {
   // 1) Create triangulation...
-  Tet::Triangulation<dim, spacedim> tria(comm, params.distribute_mesh);
+  Triangulation<dim, spacedim> tria;
 
   if (params.use_grid_generator)
     {
@@ -243,9 +222,9 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
     }
 
   // ... partition it (TODO - use the GridTools::partition_triangulation)
-  Tet::partition_triangulation(Utilities::MPI::n_mpi_processes(comm),
-                               tria,
-                               params.distribute_mesh);
+  //Tet::partition_triangulation(Utilities::MPI::n_mpi_processes(comm),
+  //                             tria,
+  //                             params.distribute_mesh);
 
   // 2) Output generated triangulation via GridOut
   GridOut       grid_out;
@@ -317,7 +296,6 @@ main(int argc, char **argv)
                            Utilities::MPI::this_mpi_process(comm) == 0);
 
   // 2D
-  if constexpr (true)
     {
       // setup parameters: TODO move to json file
       Parameters<2> params;
@@ -347,7 +325,6 @@ main(int argc, char **argv)
     }
 
   // 3D
-  if constexpr (true)
     {
       // setup parameters: TODO move to json file
       Parameters<3> params;
