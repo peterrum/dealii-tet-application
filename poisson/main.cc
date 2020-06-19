@@ -21,6 +21,8 @@
 #include <deal.II/base/conditional_ostream.h>
 #include <deal.II/base/mpi.h>
 
+#include <deal.II/distributed/fully_distributed_tria.h>
+#include <deal.II/distributed/shared_tria.h>
 #include <deal.II/distributed/tria.h>
 
 #include <deal.II/dofs/dof_handler.h>
@@ -52,6 +54,7 @@
 #include <deal.II/tet/fe_q.h>
 #include <deal.II/tet/grid_generator.h>
 #include <deal.II/tet/mapping_q.h>
+#include <deal.II/tet/partition.h>
 #include <deal.II/tet/quadrature_lib.h>
 
 using namespace dealii;
@@ -94,11 +97,39 @@ test(const Triangulation<dim, spacedim> &tria,
      const Quadrature<dim> &             quad,
      const Mapping<dim, spacedim> &      mapping)
 {
+  ConditionalOStream pcout(
+    std::cout, Utilities::MPI::this_mpi_process(get_communicator(tria)) == 0);
+
+  std::string label =
+    (dynamic_cast<const parallel::shared::Triangulation<dim, spacedim> *>(
+       &tria) ?
+       "parallel::shared::Triangulation" :
+       (dynamic_cast<
+          const parallel::fullydistributed::Triangulation<dim, spacedim> *>(
+          &tria) ?
+          "parallel::fullydistributed::Triangulation" :
+          (dynamic_cast<
+             const parallel::distributed::Triangulation<dim, spacedim> *>(
+             &tria) ?
+             "parallel::distributed::Triangulation" :
+             "Triangulation")));
+
+  std::cout << tria.n_active_cells() << std::endl;
+
+  pcout << "   on " << label << std::endl;
+
+
+  for (const auto &cell : tria.active_cell_iterators())
+    for (const auto &face : cell->face_iterators())
+      if (face->at_boundary())
+        face->set_boundary_id(0);
+
+
   DoFHandler<dim, spacedim> dof_handler(tria);
   dof_handler.distribute_dofs(fe);
 
   AffineConstraints<double> constraint_matrix;
-  DoFTools::make_zero_boundary_constraints(dof_handler, constraint_matrix);
+  DoFTools::make_zero_boundary_constraints(dof_handler, 0, constraint_matrix);
   constraint_matrix.close();
 
   // constraint_matrix.print(std::cout);
@@ -175,63 +206,119 @@ test(const Triangulation<dim, spacedim> &tria,
   SolverCG<VectorType> solver(solver_control);
   solver.solve(system_matrix, solution, system_rhs, PreconditionIdentity());
 
-  std::cout << "   " << solver_control.last_step()
-            << " CG iterations needed to obtain convergence." << std::endl;
+  pcout << "   with " << solver_control.last_step()
+        << " CG iterations needed to obtain convergence" << std::endl;
 
   // system_rhs.print(std::cout);
   // solution.print(std::cout);
 
-  {
-    // TODO: use DataOut
-    solution.update_ghost_values();
+  bool hex_mesh = true;
 
-    std::ofstream output(
-      "solution_tet." + std::to_string(Utilities::MPI::this_mpi_process(comm)) +
-      ".vtk");
-    Tet::data_out(dof_handler, solution, "solution", output);
-  }
+  for (const auto &cell : tria.active_cell_iterators())
+    hex_mesh &= (cell->n_vertices() == GeometryInfo<dim>::vertices_per_cell);
 
-  std::cout << std::endl;
+  if (hex_mesh)
+    {
+      solution.update_ghost_values();
+
+      DataOutBase::VtkFlags flags;
+      flags.write_higher_order_cells = true;
+
+      DataOut<dim> data_out;
+      data_out.set_flags(flags);
+      data_out.attach_dof_handler(dof_handler);
+      data_out.add_data_vector(solution, "solution");
+      data_out.build_patches(mapping, fe.degree);
+      std::ofstream output(
+        "solution." + std::to_string(Utilities::MPI::this_mpi_process(comm)) +
+        ".vtk");
+      data_out.write_vtk(output);
+    }
+  else
+    {
+      solution.update_ghost_values();
+
+      std::ofstream output(
+        "solution_tet." +
+        std::to_string(Utilities::MPI::this_mpi_process(comm)) + ".vtk");
+      Tet::data_out(dof_handler, solution, "solution", output);
+    }
+
+  pcout << std::endl;
 }
 
 template <int dim, int spacedim = dim>
 void
 test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
 {
-  // 1) Create triangulation...
-  Triangulation<dim, spacedim> tria;
+  const unsigned int tria_type = 2;
 
+  // 1) Create triangulation...
+  Triangulation<dim, spacedim> *tria;
+
+  // a) serial triangulation
+  Triangulation<dim, spacedim> tr_1;
+
+  // b) shared triangulation (with artificial cells)
+  parallel::shared::Triangulation<dim> tr_2(
+    MPI_COMM_WORLD,
+    ::Triangulation<dim>::none,
+    true,
+    parallel::shared::Triangulation<dim>::partition_custom_signal);
+
+  tr_2.signals.create.connect([&]() {
+    Tet::partition_triangulation(Utilities::MPI::n_mpi_processes(comm),
+                                 tr_2,
+                                 false);
+  });
+
+  // c) distributed triangulation
+  parallel::fullydistributed::Triangulation<dim> tr_3(comm);
+
+
+  // ... choose the right triangulation
+  if (tria_type == 0 || tria_type == 2)
+    tria = &tr_1;
+  else if (tria_type == 1)
+    tria = &tr_2;
+
+  // ... create triangulation
   if (params.use_grid_generator)
     {
       // ...via Tet::GridGenerator
       Tet::GridGenerator::subdivided_hyper_rectangle(
-        tria, params.repetitions, params.p1, params.p2, false);
-      // Triangulation<dim, spacedim> tria_hex;
-      // GridGenerator::subdivided_hyper_rectangle(tria_hex, params.repetitions,
-      // params.p1, params.p2, false);
-      //
-      // Tet::GridGenerator::hex_to_tet_grid(tria_hex, tria);
+        *tria, params.repetitions, params.p1, params.p2, false);
     }
   else
     {
       // ...via GridIn
       GridIn<dim, spacedim> grid_in;
-      grid_in.attach_triangulation(tria);
+      grid_in.attach_triangulation(*tria);
       std::ifstream input_file(params.file_name_in);
       grid_in.read_ucd(input_file);
     }
 
-  // ... partition it (TODO - use the GridTools::partition_triangulation)
-  // Tet::partition_triangulation(Utilities::MPI::n_mpi_processes(comm),
-  //                             tria,
-  //                             params.distribute_mesh);
+  // ... partition serial triangulation and create distributed triangulation
+  if (tria_type == 0 || tria_type == 2)
+    {
+      Tet::partition_triangulation(Utilities::MPI::n_mpi_processes(comm),
+                                   tr_1,
+                                   false);
+
+      auto construction_data = TriangulationDescription::Utilities::
+        create_description_from_triangulation(tr_1, comm);
+
+      tr_3.create_triangulation(construction_data);
+
+      tria = &tr_3;
+    }
 
   // 2) Output generated triangulation via GridOut
   GridOut       grid_out;
   std::ofstream out(params.file_name_out + "." +
                     std::to_string(Utilities::MPI::this_mpi_process(comm)) +
                     ".vtk");
-  grid_out.write_vtk(tria, out);
+  grid_out.write_vtk(*tria, out);
 
   // 3) Select components
   Tet::FE_Q<dim> fe(params.degree);
@@ -242,7 +329,7 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
   Tet::MappingQ<dim> mapping(1);
 
   // 4) Perform test (independent of mesh type)
-  test(tria, fe, quad, mapping);
+  test(*tria, fe, quad, mapping);
 }
 
 template <int dim, int spacedim = dim>
@@ -345,7 +432,7 @@ main(int argc, char **argv)
     }
 
     {
-      pcout << "Solve problem on TET mesh:" << std::endl;
+      pcout << "Solve problem on HEX mesh:" << std::endl;
 
       params.file_name_out = "mesh-hex";
       params.p1            = Point<3>(1.1, 0, 0);
