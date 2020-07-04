@@ -30,6 +30,7 @@
 
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_values.h>
+#include <deal.II/fe/mapping_isoparametric.h>
 #include <deal.II/fe/mapping_q.h>
 
 #include <deal.II/grid/grid_generator.h>
@@ -296,6 +297,8 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
       grid_in.attach_triangulation(*tria);
       std::ifstream input_file(params.file_name_in);
       grid_in.read_ucd(input_file);
+      // std::ifstream input_file("test_tet_geometry.unv");
+      // grid_in.read_unv(input_file);
     }
 
   // ... partition serial triangulation and create distributed triangulation
@@ -326,7 +329,12 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
   Tet::QGauss<dim> quad(dim == 2 ? (params.degree == 1 ? 3 : 7) :
                                    (params.degree == 1 ? 4 : 10));
 
+#if false
   Tet::MappingQ<dim> mapping(1);
+#else
+  Tet::FE_Q<dim>            fe_mapping(1);
+  MappingIsoparametric<dim> mapping(fe_mapping);
+#endif
 
   // 4) Perform test (independent of mesh type)
   test(*tria, fe, quad, mapping);
