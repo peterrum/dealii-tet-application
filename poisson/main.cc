@@ -125,8 +125,13 @@ test(const Triangulation<dim, spacedim> &tria,
   for (const auto &cell : tria.active_cell_iterators())
     for (const auto &face : cell->face_iterators())
 #if true
-      if (face->at_boundary() && face->center()[0] == r_boundary)
+      if (face->at_boundary() &&
+          (std::abs(face->center()[0] - r_boundary) < 1e-6))
         face->set_boundary_id(1);
+      // else if (face->at_boundary() && face->center()[1] == 0.0)
+      //  face->set_boundary_id(2);
+      // else if (face->at_boundary() && face->center()[1] == 1.0)
+      //  face->set_boundary_id(3);
       else
 #endif
         if (face->at_boundary())
@@ -426,7 +431,7 @@ main(int argc, char **argv)
     // setup parameters: TODO move to json file
     Parameters<2> params;
     params.use_grid_generator = true;
-    params.repetitions        = std::vector<unsigned int>{8, 8};
+    params.repetitions        = std::vector<unsigned int>{10, 10};
     params.distribute_mesh    = false;
 
     // test TRI
