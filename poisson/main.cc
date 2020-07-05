@@ -96,7 +96,9 @@ void
 test(const Triangulation<dim, spacedim> &tria,
      const FiniteElement<dim, spacedim> &fe,
      const Quadrature<dim> &             quad,
-     const Mapping<dim, spacedim> &      mapping)
+     const Quadrature<dim - 1> &         face_quad,
+     const Mapping<dim, spacedim> &      mapping,
+     const double                        r_boundary)
 {
   ConditionalOStream pcout(
     std::cout, Utilities::MPI::this_mpi_process(get_communicator(tria)) == 0);
@@ -122,7 +124,12 @@ test(const Triangulation<dim, spacedim> &tria,
 
   for (const auto &cell : tria.active_cell_iterators())
     for (const auto &face : cell->face_iterators())
-      if (face->at_boundary())
+#if true
+      if (face->at_boundary() && face->center()[0] == r_boundary)
+        face->set_boundary_id(1);
+      else
+#endif
+        if (face->at_boundary())
         face->set_boundary_id(0);
 
 
@@ -161,6 +168,14 @@ test(const Triangulation<dim, spacedim> &tria,
   const UpdateFlags flag = update_JxW_values | update_values | update_gradients;
   FEValues<dim, spacedim> fe_values(mapping, fe, quad, flag);
 
+  std::shared_ptr<FEFaceValues<dim, spacedim>> fe_face_values;
+
+#if true
+  if (dim == 2)
+    fe_face_values.reset(
+      new FEFaceValues<dim, spacedim>(mapping, fe, face_quad, flag));
+#endif
+
   const unsigned int dofs_per_cell = fe.dofs_per_cell;
   const unsigned int n_q_points    = quad.size();
 
@@ -190,11 +205,22 @@ test(const Triangulation<dim, spacedim> &tria,
                             fe_values.JxW(q_index));            // dx
           }
 
-      cell->get_dof_indices(dof_indices);
+      if (fe_face_values)
+        for (const auto &face : cell->face_iterators())
+          if (face->at_boundary() && (face->boundary_id() == 1))
+            {
+              fe_face_values->reinit(cell, face);
+              for (unsigned int q = 0; q < face_quad.size(); ++q)
+                {
+                  for (unsigned int i = 0; i < dofs_per_cell; ++i)
+                    cell_rhs(i) +=
+                      (1.0 *                               // 1.0
+                       fe_face_values->shape_value(i, q) * // phi_i(x_q)
+                       fe_face_values->JxW(q));            // dx
+                }
+            }
 
-      // for(auto i : cell_rhs)
-      //    std::cout << i << " ";
-      // std::cout << std::endl;
+      cell->get_dof_indices(dof_indices);
 
       constraint_matrix.distribute_local_to_global(
         cell_matrix, cell_rhs, dof_indices, system_matrix, system_rhs);
@@ -231,8 +257,8 @@ test(const Triangulation<dim, spacedim> &tria,
       data_out.add_data_vector(solution, "solution");
       data_out.build_patches(mapping, fe.degree);
       std::ofstream output(
-        "solution." + std::to_string(Utilities::MPI::this_mpi_process(comm)) +
-        ".vtk");
+        "solution_" + (dim == 2 ? std::string("qua.") : std::string("hex.")) +
+        std::to_string(Utilities::MPI::this_mpi_process(comm)) + ".vtk");
       data_out.write_vtk(output);
     }
   else
@@ -240,7 +266,7 @@ test(const Triangulation<dim, spacedim> &tria,
       solution.update_ghost_values();
 
       std::ofstream output(
-        "solution_tet." +
+        "solution_" + (dim == 2 ? std::string("tri.") : std::string("tet.")) +
         std::to_string(Utilities::MPI::this_mpi_process(comm)) + ".vtk");
       Tet::data_out(dof_handler, solution, "solution", output);
     }
@@ -329,6 +355,9 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
   Tet::QGauss<dim> quad(dim == 2 ? (params.degree == 1 ? 3 : 7) :
                                    (params.degree == 1 ? 4 : 10));
 
+  Tet::QGauss<dim - 1> face_quad(dim == 2 ? (params.degree == 1 ? 2 : 3) :
+                                            (params.degree == 1 ? 3 : 7));
+
 #if false
   Tet::MappingQ<dim> mapping(1);
 #else
@@ -337,7 +366,7 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
 #endif
 
   // 4) Perform test (independent of mesh type)
-  test(*tria, fe, quad, mapping);
+  test(*tria, fe, quad, face_quad, mapping, params.p2[0]);
 }
 
 template <int dim, int spacedim = dim>
@@ -374,10 +403,12 @@ test_hex(const MPI_Comm &comm, const Parameters<dim> &params)
 
   QGauss<dim> quad(params.degree + 1);
 
+  QGauss<dim - 1> quad_face(params.degree + 1);
+
   MappingQ<dim, spacedim> mapping(1);
 
   // 4) Perform test (independent of mesh type)
-  test(tria, fe, quad, mapping);
+  test(tria, fe, quad, quad_face, mapping, params.p2[0]);
 }
 
 int

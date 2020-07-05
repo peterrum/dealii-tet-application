@@ -32,9 +32,9 @@ test()
 
   // create triangulation
   Triangulation<dim, spacedim> tria;
-  std::vector<unsigned int>    sub{2, 2, 2};
-  Point<dim>                   p1(0, 0, 0);
-  Point<dim>                   p2(1, 1, 1);
+  std::vector<unsigned int>    sub{2, 2};
+  Point<dim>                   p1(0, 0);
+  Point<dim>                   p2(1, 1);
   Tet::GridGenerator::subdivided_hyper_rectangle(tria, sub, p1, p2, false);
 
   // mapping
@@ -45,22 +45,26 @@ test()
   Tet::FE_Q<dim> fe(degree);
 
   // quadrature rule
-  Tet::QGauss<dim - 1> quad(dim == 2 ? (degree == 1 ? 2 : 3) : // TODO
-                              (degree == 1 ? 3 : 7));
+  Tet::QGauss<dim - 1> quad(dim == 2 ? (degree == 1 ? 2 : 3) :
+                                       (degree == 1 ? 3 : 7));
 
   // create FEFaceValues
-  const UpdateFlags flag = update_JxW_values | update_values | update_gradients;
+  const UpdateFlags flag = update_JxW_values | update_values |
+                           update_gradients | update_normal_vectors;
   FEFaceValues<dim, spacedim> fe_face_values(mapping, fe, quad, flag);
 
   for (const auto &cell : tria.active_cell_iterators())
     for (const auto face_index : cell->face_indices())
       {
         fe_face_values.reinit(cell, face_index);
+
+        for (unsigned int q = 0; q < quad.size(); ++q)
+          std::cout << fe_face_values.normal_vector(q) << std::endl;
       }
 }
 
 int
 main()
 {
-  test<3>();
+  test<2>();
 }
