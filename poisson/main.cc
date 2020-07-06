@@ -117,8 +117,6 @@ test(const Triangulation<dim, spacedim> &tria,
              "parallel::distributed::Triangulation" :
              "Triangulation")));
 
-  std::cout << tria.n_active_cells() << std::endl;
-
   pcout << "   on " << label << std::endl;
 
 
@@ -128,10 +126,14 @@ test(const Triangulation<dim, spacedim> &tria,
       if (face->at_boundary() &&
           (std::abs(face->center()[0] - r_boundary) < 1e-6))
         face->set_boundary_id(1);
-      // else if (face->at_boundary() && face->center()[1] == 0.0)
-      //  face->set_boundary_id(2);
-      // else if (face->at_boundary() && face->center()[1] == 1.0)
-      //  face->set_boundary_id(3);
+      else if (face->at_boundary() && face->center()[1] == 0.0)
+        face->set_boundary_id(2);
+      else if (face->at_boundary() && face->center()[1] == 1.0)
+        face->set_boundary_id(2);
+      else if (dim == 3 && face->at_boundary() && face->center()[2] == 0.0)
+        face->set_boundary_id(2);
+      else if (dim == 3 && face->at_boundary() && face->center()[2] == 1.0)
+        face->set_boundary_id(2);
       else
 #endif
         if (face->at_boundary())
@@ -170,15 +172,16 @@ test(const Triangulation<dim, spacedim> &tria,
                     locally_relevant_dofs,
                     comm);
 
-  const UpdateFlags flag = update_JxW_values | update_values | update_gradients;
+  const UpdateFlags flag = update_JxW_values | update_values |
+                           update_gradients | update_quadrature_points;
   FEValues<dim, spacedim> fe_values(mapping, fe, quad, flag);
 
   std::shared_ptr<FEFaceValues<dim, spacedim>> fe_face_values;
 
 #if true
-  if (dim == 2)
-    fe_face_values.reset(
-      new FEFaceValues<dim, spacedim>(mapping, fe, face_quad, flag));
+  // if (dim == 2)
+  fe_face_values.reset(
+    new FEFaceValues<dim, spacedim>(mapping, fe, face_quad, flag));
 #endif
 
   const unsigned int dofs_per_cell = fe.dofs_per_cell;
@@ -206,7 +209,7 @@ test(const Triangulation<dim, spacedim> &tria,
                  fe_values.shape_grad(j, q_index) * // grad phi_j(x_q)
                  fe_values.JxW(q_index));           // dx
             cell_rhs(i) += (fe_values.shape_value(i, q_index) * // phi_i(x_q)
-                            1.0 *                               // 1.0
+                            0.0 *                               // 1.0
                             fe_values.JxW(q_index));            // dx
           }
 
@@ -218,10 +221,12 @@ test(const Triangulation<dim, spacedim> &tria,
               for (unsigned int q = 0; q < face_quad.size(); ++q)
                 {
                   for (unsigned int i = 0; i < dofs_per_cell; ++i)
-                    cell_rhs(i) +=
-                      (1.0 *                               // 1.0
-                       fe_face_values->shape_value(i, q) * // phi_i(x_q)
-                       fe_face_values->JxW(q));            // dx
+                    {
+                      cell_rhs(i) +=
+                        (1.0 *                               // 1.0
+                         fe_face_values->shape_value(i, q) * // phi_i(x_q)
+                         fe_face_values->JxW(q));            // dx
+                    }
                 }
             }
 
