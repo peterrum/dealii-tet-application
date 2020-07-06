@@ -71,7 +71,6 @@ struct Parameters
   std::vector<unsigned int> repetitions;
   Point<dim>                p1;
   Point<dim>                p2;
-  bool                      distribute_mesh;
 
   // GridIn
   std::string file_name_in = "";
@@ -179,7 +178,6 @@ test(const Triangulation<dim, spacedim> &tria,
   std::shared_ptr<FEFaceValues<dim, spacedim>> fe_face_values;
 
 #if true
-  // if (dim == 2)
   fe_face_values.reset(
     new FEFaceValues<dim, spacedim>(mapping, fe, face_quad, flag));
 #endif
@@ -209,7 +207,7 @@ test(const Triangulation<dim, spacedim> &tria,
                  fe_values.shape_grad(j, q_index) * // grad phi_j(x_q)
                  fe_values.JxW(q_index));           // dx
             cell_rhs(i) += (fe_values.shape_value(i, q_index) * // phi_i(x_q)
-                            0.0 *                               // 1.0
+                            1.0 *                               // 1.0
                             fe_values.JxW(q_index));            // dx
           }
 
@@ -219,15 +217,11 @@ test(const Triangulation<dim, spacedim> &tria,
             {
               fe_face_values->reinit(cell, face);
               for (unsigned int q = 0; q < face_quad.size(); ++q)
-                {
-                  for (unsigned int i = 0; i < dofs_per_cell; ++i)
-                    {
-                      cell_rhs(i) +=
-                        (1.0 *                               // 1.0
-                         fe_face_values->shape_value(i, q) * // phi_i(x_q)
-                         fe_face_values->JxW(q));            // dx
-                    }
-                }
+                for (unsigned int i = 0; i < dofs_per_cell; ++i)
+                  cell_rhs(i) +=
+                    (1.0 *                               // 1.0
+                     fe_face_values->shape_value(i, q) * // phi_i(x_q)
+                     fe_face_values->JxW(q));            // dx
             }
 
       cell->get_dof_indices(dof_indices);
@@ -437,7 +431,6 @@ main(int argc, char **argv)
     Parameters<2> params;
     params.use_grid_generator = true;
     params.repetitions        = std::vector<unsigned int>{10, 10};
-    params.distribute_mesh    = false;
 
     // test TRI
     {
@@ -466,9 +459,6 @@ main(int argc, char **argv)
     Parameters<3> params;
     params.use_grid_generator = true;
     params.repetitions        = std::vector<unsigned int>{10, 10, 10};
-    params.distribute_mesh =
-      false; // TODO: bug in distributed dofhandler policy
-    // params.degree    = 1;
 
     // test TET
     {
