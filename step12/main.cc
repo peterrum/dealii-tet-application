@@ -285,11 +285,12 @@ namespace Step12
   AdvectionProblem<dim>::AdvectionProblem()
 #ifdef HEX
     : mapping()
+    , fe(1)
 #else
     : fe_mapping(1)
     , mapping(fe_mapping)
-#endif
     , fe(2)
+#endif
     , dof_handler(triangulation)
   {}
 
@@ -588,7 +589,13 @@ namespace Step12
   void
   AdvectionProblem<dim>::output_results(const unsigned int cycle) const
   {
-    const std::string filename = "solution-" + std::to_string(cycle) + ".vtk";
+#ifdef HEX
+    const std::string filename =
+      "solution-hex-" + std::to_string(cycle) + ".vtk";
+#else
+    const std::string filename =
+      "solution-tet-" + std::to_string(cycle) + ".vtk";
+#endif
     std::cout << "  Writing solution to <" << filename << ">" << std::endl;
     std::ofstream output(filename);
 
@@ -627,21 +634,22 @@ namespace Step12
   void
   AdvectionProblem<dim>::run()
   {
-#ifdef HEX
-    for (unsigned int cycle = 0; cycle < 6; ++cycle)
-#else
+    //#ifdef HEX
+    //    for (unsigned int cycle = 0; cycle < 6; ++cycle)
+    //#else
     for (unsigned int cycle = 0; cycle < 1; ++cycle)
-#endif
+      //#endif
       {
         std::cout << "Cycle " << cycle << std::endl;
 
         if (cycle == 0)
           {
 #ifdef HEX
-            GridGenerator::hyper_cube(triangulation);
-            triangulation.refine_global(3);
+            // GridGenerator::hyper_cube(triangulation);
+            // triangulation.refine_global(3);
+            GridGenerator::subdivided_hyper_cube(triangulation, 32);
 #else
-            Tet::GridGenerator::subdivided_hyper_cube(triangulation, 32);
+            Tet::GridGenerator::subdivided_hyper_cube(triangulation, 64);
 #endif
           }
         else
