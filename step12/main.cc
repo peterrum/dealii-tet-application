@@ -65,7 +65,15 @@
 
 // Finally, the new include file for using the mesh_loop from the MeshWorker
 // framework
+#include <deal.II/fe/mapping_isoparametric.h>
+
 #include <deal.II/meshworker/mesh_loop.h>
+
+#include <deal.II/tet/data_out.h>
+#include <deal.II/tet/fe_dgq.h>
+#include <deal.II/tet/fe_q.h>
+#include <deal.II/tet/grid_generator.h>
+#include <deal.II/tet/quadrature_lib.h>
 
 // Like in all programs, we finish this section by including the needed C++
 // headers and declaring we want to use objects in the dealii namespace without
@@ -73,6 +81,7 @@
 #include <fstream>
 #include <iostream>
 
+//#define HEX
 
 namespace Step12
 {
@@ -151,21 +160,19 @@ namespace Step12
   template <int dim>
   struct ScratchData
   {
-    ScratchData(const Mapping<dim> &      mapping,
-                const FiniteElement<dim> &fe,
-                const unsigned int        quadrature_degree,
-                const UpdateFlags         update_flags = update_values |
+    ScratchData(const Mapping<dim> &       mapping,
+                const FiniteElement<dim> & fe,
+                const Quadrature<dim> &    quad,
+                const Quadrature<dim - 1> &quad_face,
+                const UpdateFlags          update_flags = update_values |
                                                  update_gradients |
                                                  update_quadrature_points |
                                                  update_JxW_values,
                 const UpdateFlags interface_update_flags =
                   update_values | update_gradients | update_quadrature_points |
                   update_JxW_values | update_normal_vectors)
-      : fe_values(mapping, fe, QGauss<dim>(quadrature_degree), update_flags)
-      , fe_interface_values(mapping,
-                            fe,
-                            QGauss<dim - 1>(quadrature_degree),
-                            interface_update_flags)
+      : fe_values(mapping, fe, quad, update_flags)
+      , fe_interface_values(mapping, fe, quad_face, interface_update_flags)
     {}
 
 
@@ -243,11 +250,20 @@ namespace Step12
     void
     output_results(const unsigned int cycle) const;
 
-    Triangulation<dim>   triangulation;
+    Triangulation<dim> triangulation;
+#ifdef HEX
     const MappingQ1<dim> mapping;
+#else
+    Tet::FE_Q<dim>                  fe_mapping;
+    const MappingIsoparametric<dim> mapping;
+#endif
 
     // Furthermore we want to use DG elements.
-    FE_DGQ<dim>     fe;
+#ifdef HEX
+    FE_DGQ<dim> fe;
+#else
+    Tet::FE_DGQ<dim>                fe;
+#endif
     DoFHandler<dim> dof_handler;
 
     // The next four members represent the linear system to be solved.
@@ -267,8 +283,13 @@ namespace Step12
   // <code>fe</code> is the polynomial degree.
   template <int dim>
   AdvectionProblem<dim>::AdvectionProblem()
+#ifdef HEX
     : mapping()
-    , fe(1)
+#else
+    : fe_mapping(1)
+    , mapping(fe_mapping)
+#endif
+    , fe(2)
     , dof_handler(triangulation)
   {}
 
@@ -451,9 +472,15 @@ namespace Step12
         }
     };
 
-    const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
+    const unsigned int degree = dof_handler.get_fe().degree;
 
-    ScratchData<dim> scratch_data(mapping, fe, n_gauss_points);
+    Tet::QGauss<dim> quad(dim == 2 ? (degree == 1 ? 3 : 7) :
+                                     (degree == 1 ? 4 : 10));
+
+    Tet::QGauss<dim - 1> face_quad(dim == 2 ? (degree == 1 ? 2 : 3) :
+                                              (degree == 1 ? 3 : 7));
+
+    ScratchData<dim> scratch_data(mapping, fe, quad, face_quad);
     CopyData         copy_data;
 
     // Here, we finally handle the assembly. We pass in ScratchData and
@@ -565,6 +592,7 @@ namespace Step12
     std::cout << "  Writing solution to <" << filename << ">" << std::endl;
     std::ofstream output(filename);
 
+#ifdef HEX
     DataOut<dim> data_out;
     data_out.attach_dof_handler(dof_handler);
     data_out.add_data_vector(solution, "u", DataOut<dim>::type_dof_data);
@@ -572,10 +600,14 @@ namespace Step12
     data_out.build_patches();
 
     data_out.write_vtk(output);
+#else
+    Tet::data_out(dof_handler, solution, "u", output);
+#endif
 
     {
       Vector<float> values(triangulation.n_active_cells());
-      VectorTools::integrate_difference(dof_handler,
+      VectorTools::integrate_difference(mapping,
+                                        dof_handler,
                                         solution,
                                         Functions::ZeroFunction<dim>(),
                                         values,
@@ -595,14 +627,22 @@ namespace Step12
   void
   AdvectionProblem<dim>::run()
   {
+#ifdef HEX
     for (unsigned int cycle = 0; cycle < 6; ++cycle)
+#else
+    for (unsigned int cycle = 0; cycle < 1; ++cycle)
+#endif
       {
         std::cout << "Cycle " << cycle << std::endl;
 
         if (cycle == 0)
           {
+#ifdef HEX
             GridGenerator::hyper_cube(triangulation);
             triangulation.refine_global(3);
+#else
+            Tet::GridGenerator::subdivided_hyper_cube(triangulation, 32);
+#endif
           }
         else
           refine_grid();
