@@ -66,22 +66,21 @@ using namespace dealii;
 template <int dim>
 struct ScratchData
 {
-  ScratchData(const Mapping<dim> &      mapping,
-              const FiniteElement<dim> &fe,
-              const unsigned int        quadrature_degree,
-              const UpdateFlags         update_flags = update_values |
+  ScratchData(const Mapping<dim> &       mapping,
+              const FiniteElement<dim> & fe,
+              const Quadrature<dim> &    quad,
+              const Quadrature<dim - 1> &quad_face,
+              const UpdateFlags          update_flags = update_values |
                                                update_gradients |
                                                update_quadrature_points |
                                                update_JxW_values,
               const UpdateFlags interface_update_flags =
                 update_values | update_gradients | update_quadrature_points |
                 update_JxW_values | update_normal_vectors)
-    : fe_values(mapping, fe, QGauss<dim>(quadrature_degree), update_flags)
-    , fe_interface_values(mapping,
-                          fe,
-                          QGauss<dim - 1>(quadrature_degree),
-                          interface_update_flags)
+    : fe_values(mapping, fe, quad, update_flags)
+    , fe_interface_values(mapping, fe, quad_face, interface_update_flags)
   {}
+
   ScratchData(const ScratchData<dim> &scratch_data)
     : fe_values(scratch_data.fe_values.get_mapping(),
                 scratch_data.fe_values.get_fe(),
@@ -94,6 +93,7 @@ struct ScratchData
         scratch_data.fe_interface_values.get_quadrature(),
         scratch_data.fe_interface_values.get_update_flags())
   {}
+
   FEValues<dim>          fe_values;
   FEInterfaceValues<dim> fe_interface_values;
 };
@@ -147,15 +147,29 @@ test(const unsigned int degree)
   DoFHandler<dim, spacedim> dof_handler(tria);
   dof_handler.distribute_dofs(fe);
 
-  // quadrature rule
-  Tet::QGauss<dim - 1> quad(dim == 2 ? (degree == 1 ? 2 : 3) :
-                                       (degree == 1 ? 3 : 7));
+  // quadrature rules
+  Tet::QGauss<dim> quad(dim == 2 ? (degree == 1 ? 3 : 7) :
+                                   (degree == 1 ? 4 : 10));
+
+  Tet::QGauss<dim - 1> quad_face(dim == 2 ? (degree == 1 ? 2 : 3) :
+                                            (degree == 1 ? 3 : 7));
 
   const auto cell_worker =
     [&](const auto &cell, auto &scratch_data, auto &copy_data) {
-      (void)cell;
-      (void)scratch_data;
-      (void)copy_data;
+      const unsigned int n_dofs = scratch_data.fe_values.get_fe().dofs_per_cell;
+      copy_data.reinit(cell, n_dofs);
+      scratch_data.fe_values.reinit(cell);
+      const auto &q_points = scratch_data.fe_values.get_quadrature_points();
+      const FEValues<dim> &      fe_v = scratch_data.fe_values;
+      const std::vector<double> &JxW  = fe_v.get_JxW_values();
+
+      for (unsigned int q = 0; q < fe_v.n_quadrature_points; ++q)
+        for (unsigned int i = 0; i < n_dofs; ++i)
+          for (unsigned int j = 0; j < n_dofs; ++j)
+            copy_data.cell_matrix(i, j) +=
+              *fe_v.fe_values.shape_grad(i, q)  // grad phi_i(x_q)
+              * fe_v.fe_values.shape_grad(j, q) // grad phi_j(x_q)
+              * JxW[q];                         // dx
     };
 
   const auto boundary_worker = [&](const auto &cell,
@@ -166,6 +180,8 @@ test(const unsigned int degree)
     (void)face_no;
     (void)scratch_data;
     (void)copy_data;
+
+    // TODO
   };
 
   const auto face_worker = [&](const auto &cell,
@@ -184,6 +200,30 @@ test(const unsigned int degree)
     (void)nsf;
     (void)scratch_data;
     (void)copy_data;
+
+    FEInterfaceValues<dim> &fe_iv = scratch_data.fe_interface_values;
+    fe_iv.reinit(cell, f, sf, ncell, nf, nsf);
+    const auto &q_points = fe_iv.get_quadrature_points();
+    copy_data.face_data.emplace_back();
+    CopyDataFace &     copy_data_face = copy_data.face_data.back();
+    const unsigned int n_dofs         = fe_iv.n_current_interface_dofs();
+    copy_data_face.joint_dof_indices  = fe_iv.get_interface_dof_indices();
+    copy_data_face.cell_matrix.reinit(n_dofs, n_dofs);
+    const std::vector<double> &        JxW     = fe_iv.get_JxW_values();
+    const std::vector<Tensor<1, dim>> &normals = fe_iv.get_normal_vectors();
+
+    for (unsigned int qpoint = 0; qpoint < q_points.size(); ++qpoint)
+      for (unsigned int i = 0; i < n_dofs; ++i)
+        for (unsigned int j = 0; j < n_dofs; ++j)
+          copy_data_face.cell_matrix(i, j) +=
+            (fe_iv.shape_value(true, i, qpoint)       // phi_i
+               * fe_iv.shape_value(true, j, qpoint)   // phi_j
+               * 1.0                                  // tau
+             + fe_iv.shape_value(true, i, qpoint)     // phi_i
+                 * fe_iv.shape_value(true, j, qpoint) // phi_j
+                 * 1.0                                // tau
+             ) *
+            JxW(qpoint); // dx
   };
 
   SparseMatrix<double> system_matrix;
@@ -198,16 +238,14 @@ test(const unsigned int degree)
                                            system_matrix,
                                            right_hand_side);
     for (auto &cdf : c.face_data)
-      {
-        constraints.distribute_local_to_global(cdf.cell_matrix,
-                                               cdf.joint_dof_indices,
-                                               system_matrix);
-      }
+      constraints.distribute_local_to_global(cdf.cell_matrix,
+                                             cdf.joint_dof_indices,
+                                             system_matrix);
   };
 
-  const unsigned int n_gauss_points = degree + 1;
-  ScratchData<dim>   scratch_data(mapping, fe, n_gauss_points);
-  CopyData           copy_data;
+  ScratchData<dim> scratch_data(mapping, fe, quad, quad_face);
+
+  CopyData copy_data;
   MeshWorker::mesh_loop(dof_handler.begin_active(),
                         dof_handler.end(),
                         cell_worker,
