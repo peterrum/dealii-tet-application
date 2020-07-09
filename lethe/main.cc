@@ -14,7 +14,7 @@
  * ---------------------------------------------------------------------
 
  *
- * Author: Wolfgang Bangerth, University of Heidelberg, 1999
+ * Author: Wolfgang Bangerth, Bruno Blais
  */
 
 
@@ -35,6 +35,7 @@
 #include <deal.II/fe/fe_interface_values.h>
 #include <deal.II/fe/fe_q.h>
 #include <deal.II/fe/fe_values.h>
+#include <deal.II/fe/mapping_isoparametric.h>
 #include <deal.II/fe/mapping_q.h>
 
 #include <deal.II/grid/grid_generator.h>
@@ -56,8 +57,16 @@
 #include <deal.II/numerics/matrix_tools.h>
 #include <deal.II/numerics/vector_tools.h>
 
+#include <deal.II/tet/data_out.h>
+#include <deal.II/tet/fe_dgq.h>
+#include <deal.II/tet/fe_q.h>
+#include <deal.II/tet/grid_generator.h>
+#include <deal.II/tet/quadrature_lib.h>
+
 #include <fstream>
 #include <iostream>
+
+#define HEX
 
 using namespace dealii;
 enum simCase
@@ -69,21 +78,19 @@ enum simCase
 template <int dim>
 struct ScratchData
 {
-  ScratchData(const Mapping<dim> &      mapping,
-              const FiniteElement<dim> &fe,
-              const unsigned int        quadrature_degree,
-              const UpdateFlags         update_flags = update_values |
+  ScratchData(const Mapping<dim> &       mapping,
+              const FiniteElement<dim> & fe,
+              const Quadrature<dim> &    quad,
+              const Quadrature<dim - 1> &quad_face,
+              const UpdateFlags          update_flags = update_values |
                                                update_gradients |
                                                update_quadrature_points |
                                                update_JxW_values,
               const UpdateFlags interface_update_flags =
                 update_values | update_gradients | update_quadrature_points |
                 update_JxW_values | update_normal_vectors)
-    : fe_values(mapping, fe, QGauss<dim>(quadrature_degree), update_flags)
-    , fe_interface_values(mapping,
-                          fe,
-                          QGauss<dim - 1>(quadrature_degree),
-                          interface_update_flags)
+    : fe_values(mapping, fe, quad, update_flags)
+    , fe_interface_values(mapping, fe, quad_face, interface_update_flags)
   {}
 
 
@@ -163,8 +170,10 @@ RightHandSideMMS<dim>::value(const Point<dim> &p,
   double return_value = 0.0;
   double x            = p(0);
   double y            = p(1);
+  double z            = p(2);
 
-  return_value = -2. * M_PI * M_PI * std::sin(M_PI * x) * std::sin(M_PI * y);
+  return_value = -3. * M_PI * M_PI * std::sin(M_PI * x) * std::sin(M_PI * y) *
+                 std::sin(M_PI * z);
 
   return return_value;
 }
@@ -194,11 +203,11 @@ public:
 
 private:
   void
-  make_grid();
+  make_grid(int refinements = -1);
   void
-  make_cube_grid();
+  make_cube_grid(int refinements = -1);
   void
-  make_ring_grid();
+  make_ring_grid(int refinements = -1);
   void
   setup_system();
   void
@@ -210,10 +219,21 @@ private:
   void
   calculateL2Error();
 
-  Triangulation<dim>  triangulation;
-  FE_DGQ<dim>         fe;
+  Triangulation<dim> triangulation;
+
+#ifdef HEX
+  FE_DGQ<dim> fe;
+#else
+  Tet::FE_DGQ<dim>                fe;
+#endif
+
+#ifdef HEX
   const MappingQ<dim> mapping;
-  DoFHandler<dim>     dof_handler;
+#else
+  Tet::FE_Q<dim>                  fe_mapping;
+  const MappingIsoparametric<dim> mapping;
+#endif
+  DoFHandler<dim> dof_handler;
 
 
   RightHandSideMMS<dim> right_hand_side;
@@ -240,8 +260,14 @@ template <int dim>
 DGHeat<dim>::DGHeat(simCase      scase,
                     unsigned int initial_refinement,
                     unsigned int number_refinement)
-  : fe(1)
+#ifdef HEX
+  : fe(1 /*degree*/)
   , mapping(1)
+#else
+  : fe(2 /*degree*/)
+  , fe_mapping(1)
+  , mapping(fe_mapping)
+#endif
   , dof_handler(triangulation)
   , simulation_case(scase)
   , initial_refinement_level(initial_refinement)
@@ -250,20 +276,31 @@ DGHeat<dim>::DGHeat(simCase      scase,
 
 template <int dim>
 void
-DGHeat<dim>::make_grid()
+DGHeat<dim>::make_grid(int refinements)
 {
+  triangulation.clear();
+
   if (simulation_case == MMS)
-    make_cube_grid();
+    make_cube_grid(refinements);
   else if (simulation_case == TaylorCouette)
-    make_ring_grid();
+    make_ring_grid(refinements);
 }
 
 template <int dim>
 void
-DGHeat<dim>::make_cube_grid()
+DGHeat<dim>::make_cube_grid(int refinements)
 {
+  int ref = refinements == -1 ? initial_refinement_level : refinements;
+
+#ifdef HEX
   GridGenerator::hyper_cube(triangulation, -1, 1);
-  triangulation.refine_global(initial_refinement_level);
+  triangulation.refine_global(ref);
+#else
+  Tet::GridGenerator::subdivided_hyper_cube(triangulation,
+                                            Utilities::pow(2, ref),
+                                            -1.0,
+                                            +1.0);
+#endif
 
   std::cout << "   Number of active cells: " << triangulation.n_active_cells()
             << std::endl
@@ -273,7 +310,7 @@ DGHeat<dim>::make_cube_grid()
 
 template <int dim>
 void
-DGHeat<dim>::make_ring_grid()
+DGHeat<dim>::make_ring_grid(int /*refinements*/)
 {
   const double inner_radius = 0.25, outer_radius = 1.0;
   if (dim == 2)
@@ -373,9 +410,18 @@ DGHeat<dim>::assemble_system()
 
     double h;
     if (dim == 2)
+#ifdef HEX
       h = std::sqrt(4. * cell->measure() / M_PI);
+#else
+      h = std::sqrt(4. * (4.0 / triangulation.n_cells()) / M_PI);
+#endif
     else if (dim == 3)
+#ifdef HEX
       h = pow(6 * cell->measure() / M_PI, 1. / 3.);
+#else
+      h = pow(6 * (8.0 / triangulation.n_cells()) / M_PI, 1. / 3.);
+#endif
+
 
 
     const double beta = 10.;
@@ -448,9 +494,17 @@ DGHeat<dim>::assemble_system()
 
     double h;
     if (dim == 2)
+#ifdef HEX
       h = std::sqrt(4. * cell->measure() / M_PI);
+#else
+      h = std::sqrt(4. * (4.0 / triangulation.n_cells()) / M_PI);
+#endif
     else if (dim == 3)
+#ifdef HEX
       h = pow(6 * cell->measure() / M_PI, 1. / 3.);
+#else
+      h = pow(6 * (8.0 / triangulation.n_cells()) / M_PI, 1. / 3.);
+#endif
 
     const double beta = 10.;
 
@@ -495,9 +549,21 @@ DGHeat<dim>::assemble_system()
       }
   };
 
-  const unsigned int n_gauss_points = dof_handler.get_fe().degree + 1;
+  const unsigned int degree = dof_handler.get_fe().degree;
 
-  ScratchData<dim> scratch_data(mapping, fe, n_gauss_points);
+#ifdef HEX
+  QGauss<dim> quad(degree + 1);
+
+  QGauss<dim - 1> face_quad(degree + 1);
+#else
+  Tet::QGauss<dim> quad(dim == 2 ? (degree == 1 ? 3 : 7) :
+                                   (degree == 1 ? 4 : 10));
+
+  Tet::QGauss<dim - 1> face_quad(dim == 2 ? (degree == 1 ? 2 : 3) :
+                                            (degree == 1 ? 3 : 7));
+#endif
+
+  ScratchData<dim> scratch_data(mapping, fe, quad, face_quad);
   CopyData         copy_data;
 
   MeshWorker::mesh_loop(dof_handler.begin_active(),
@@ -531,20 +597,34 @@ template <int dim>
 void
 DGHeat<dim>::output_results(unsigned int it) const
 {
+  return;
+
+#ifdef HEX
+  std::string dimension(dim == 2 ? "solution-2d-hex-case-" :
+                                   "solution-3d-hex-case-");
+#else
+  std::string dimension(dim == 2 ? "solution-2d-tet-case-" :
+                                   "solution-3d-tet-case-");
+#endif
+
+  std::string fname = dimension + Utilities::int_to_string(simulation_case) +
+                      "-" + Utilities::int_to_string(it) + ".vtk";
+
+  std::cout << "  Writing solution to <" << fname << ">" << std::endl;
+
+  std::ofstream output(fname.c_str());
+
+#ifdef HEX
   DataOut<dim> data_out;
 
   data_out.attach_dof_handler(dof_handler);
   data_out.add_data_vector(solution, "solution");
 
   data_out.build_patches();
-
-  std::string dimension(dim == 2 ? "solution-2d-case-" : "solution-3d-case-");
-
-  std::string fname = dimension + Utilities::int_to_string(simulation_case) +
-                      "-" + Utilities::int_to_string(it) + ".vtk";
-
-  std::ofstream output(fname.c_str());
   data_out.write_vtk(output);
+#else
+  Tet::data_out(dof_handler, solution, "solution", output);
+#endif
 }
 
 // Find the l2 norm of the error between the finite element sol'n and the exact
@@ -553,8 +633,17 @@ template <int dim>
 void
 DGHeat<dim>::calculateL2Error()
 {
-  QGauss<dim>   quadrature_formula(5);
-  FEValues<dim> fe_values(fe,
+  const unsigned int degree = dof_handler.get_fe().degree;
+
+#ifdef HEX
+  QGauss<dim> quadrature_formula(degree + 1);
+#else
+  Tet::QGauss<dim> quadrature_formula(dim == 2 ? (degree == 1 ? 3 : 7) :
+                                                 (degree == 1 ? 4 : 10));
+#endif
+
+  FEValues<dim> fe_values(mapping,
+                          fe,
                           quadrature_formula,
                           update_values | update_gradients |
                             update_quadrature_points | update_JxW_values);
@@ -584,16 +673,18 @@ DGHeat<dim>::calculateL2Error()
         {
           const double x = fe_values.quadrature_point(q)[0];
           const double y = fe_values.quadrature_point(q)[1];
-          if (dim > 2)
-            const double z = fe_values.quadrature_point(q)[2];
+          // if (dim > 2)
+          const double z = fe_values.quadrature_point(q)[2];
 
           const double r       = std::sqrt(x * x + y * y);
           const double lnratio = std::log(1. / 0.25);
           double       u_exact = 0.;
-          if (simulation_case == TaylorCouette)
+          if (simulation_case == TaylorCouette && false)
             u_exact = 1. / (lnratio)*std::log(r / 0.25);
           if (simulation_case == MMS)
-            u_exact = -sin(M_PI * x) * std::sin(M_PI * y);
+            u_exact =
+              -std::sin(M_PI * x) * std::sin(M_PI * y) * std::sin(M_PI * z);
+          ;
           double u_sim = 0;
 
           // Find the values of x and u_h (the finite element solution) at the
@@ -614,6 +705,7 @@ DGHeat<dim>::calculateL2Error()
   std::cout << "L2Error is : " << std::sqrt(l2error) << std::endl;
   error_table.add_value("error", std::sqrt(l2error));
   error_table.add_value("cells", triangulation.n_global_active_cells());
+  error_table.add_value("dofs", dof_handler.n_dofs());
 }
 
 
@@ -622,11 +714,9 @@ template <int dim>
 void
 DGHeat<dim>::run()
 {
-  make_grid();
   for (unsigned int it = 0; it < number_refinement; ++it)
     {
-      if (it > 0)
-        triangulation.refine_global(1);
+      make_grid(initial_refinement_level + it);
       setup_system();
       assemble_system();
       solve();
@@ -659,7 +749,7 @@ main()
   // MMS
   {
     std::cout << "Solving MMS problem 2D " << std::endl;
-    DGHeat<3> mms_problem_2d(MMS, 2, 8);
+    DGHeat<3> mms_problem_2d(MMS, 2, 5);
     mms_problem_2d.run();
   }
   return 0;
