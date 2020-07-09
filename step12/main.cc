@@ -67,6 +67,8 @@
 // framework
 #include <deal.II/fe/mapping_isoparametric.h>
 
+#include <deal.II/lac/precondition.h>
+
 #include <deal.II/meshworker/mesh_loop.h>
 
 #include <deal.II/tet/data_out.h>
@@ -143,7 +145,9 @@ namespace Step12
     Point<dim> wind_field;
     wind_field(0) = -p(1);
     wind_field(1) = p(0);
-    wind_field /= wind_field.norm();
+
+    if (wind_field.norm() > 1e-6)
+      wind_field /= wind_field.norm();
 
     return wind_field;
   }
@@ -285,7 +289,7 @@ namespace Step12
   AdvectionProblem<dim>::AdvectionProblem()
 #ifdef HEX
     : mapping()
-    , fe(1)
+    , fe(2)
 #else
     : fe_mapping(1)
     , mapping(fe_mapping)
@@ -357,6 +361,10 @@ namespace Step12
           for (unsigned int i = 0; i < n_dofs; ++i)
             for (unsigned int j = 0; j < n_dofs; ++j)
               {
+                // std::cout << q_points[point] << " " << beta_q << " " <<
+                // fe_v.shape_grad(i, point) << " " << fe_v.shape_value(j, point)
+                // << " " << JxW[point] << std::endl;
+
                 copy_data.cell_matrix(i, j) +=
                   -beta_q                      // -\beta
                   * fe_v.shape_grad(i, point)  // \nabla \phi_i
@@ -364,6 +372,10 @@ namespace Step12
                   * JxW[point];                // dx
               }
         }
+
+      // copy_data.cell_matrix.print(std::cout);
+
+      // exit(0);
     };
 
     // This is the function called for boundary faces and consists of a normal
@@ -475,11 +487,17 @@ namespace Step12
 
     const unsigned int degree = dof_handler.get_fe().degree;
 
+#ifdef HEX
+    QGauss<dim> quad(degree + 1);
+
+    QGauss<dim - 1> face_quad(degree + 1);
+#else
     Tet::QGauss<dim> quad(dim == 2 ? (degree == 1 ? 3 : 7) :
                                      (degree == 1 ? 4 : 10));
 
     Tet::QGauss<dim - 1> face_quad(dim == 2 ? (degree == 1 ? 2 : 3) :
                                               (degree == 1 ? 3 : 7));
+#endif
 
     ScratchData<dim> scratch_data(mapping, fe, quad, face_quad);
     CopyData         copy_data;
@@ -521,14 +539,22 @@ namespace Step12
     // Here we create the preconditioner,
     PreconditionBlockSSOR<SparseMatrix<double>> preconditioner;
 
+    // system_matrix.print(std::cout);
+
     // then assign the matrix to it and set the right block size:
     preconditioner.initialize(system_matrix, fe.dofs_per_cell);
 
     // After these preparations we are ready to start the linear solver.
+    // try
+    //{
     solver.solve(system_matrix, solution, right_hand_side, preconditioner);
+    // solver.solve(system_matrix, solution, right_hand_side,
+    // PreconditionIdentity());
 
     std::cout << "  Solver converged in " << solver_control.last_step()
               << " iterations." << std::endl;
+    //}
+    // catch(...){}
   }
 
 
@@ -647,9 +673,9 @@ namespace Step12
 #ifdef HEX
             // GridGenerator::hyper_cube(triangulation);
             // triangulation.refine_global(3);
-            GridGenerator::subdivided_hyper_cube(triangulation, 32);
+            GridGenerator::subdivided_hyper_cube(triangulation, 16);
 #else
-            Tet::GridGenerator::subdivided_hyper_cube(triangulation, 64);
+            Tet::GridGenerator::subdivided_hyper_cube(triangulation, 2);
 #endif
           }
         else
@@ -679,7 +705,7 @@ main()
 {
   try
     {
-      Step12::AdvectionProblem<2> dgmethod;
+      Step12::AdvectionProblem<3> dgmethod;
       dgmethod.run();
     }
   catch (std::exception &exc)
