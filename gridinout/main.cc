@@ -17,45 +17,9 @@
 // Solve Poisson problem on a tet mesh and on a quad mesh with the same number
 // of subdivisions.
 
-
-#include <deal.II/base/conditional_ostream.h>
-#include <deal.II/base/mpi.h>
-
-#include <deal.II/distributed/fully_distributed_tria.h>
-#include <deal.II/distributed/shared_tria.h>
-#include <deal.II/distributed/tria.h>
-
-#include <deal.II/dofs/dof_handler.h>
-#include <deal.II/dofs/dof_tools.h>
-
-#include <deal.II/fe/fe_q.h>
-#include <deal.II/fe/fe_values.h>
-#include <deal.II/fe/mapping_q.h>
-
-#include <deal.II/grid/grid_generator.h>
 #include <deal.II/grid/grid_in.h>
 #include <deal.II/grid/grid_out.h>
-#include <deal.II/grid/grid_tools.h>
 #include <deal.II/grid/tria.h>
-
-#include <deal.II/lac/affine_constraints.h>
-#include <deal.II/lac/dynamic_sparsity_pattern.h>
-#include <deal.II/lac/full_matrix.h>
-#include <deal.II/lac/la_parallel_vector.h>
-#include <deal.II/lac/precondition.h>
-#include <deal.II/lac/solver_cg.h>
-#include <deal.II/lac/sparse_matrix.h>
-#include <deal.II/lac/trilinos_sparse_matrix.h>
-#include <deal.II/lac/trilinos_sparsity_pattern.h>
-
-#include <deal.II/numerics/data_out.h>
-
-#include <deal.II/tet/data_out.h>
-#include <deal.II/tet/fe_q.h>
-#include <deal.II/tet/grid_generator.h>
-#include <deal.II/tet/mapping_q.h>
-#include <deal.II/tet/partition.h>
-#include <deal.II/tet/quadrature_lib.h>
 
 using namespace dealii;
 
@@ -68,10 +32,15 @@ test(const std::string &file_name)
   GridIn<dim, spacedim> grid_in;
   grid_in.attach_triangulation(tria);
   std::ifstream input_file(file_name);
-  // grid_in.read_ucd(input_file);
-  // grid_in.read_msh(input_file);
-  // grid_in.read_abaqus(input_file);
-  grid_in.read_unv(input_file);
+
+  if (false)
+    grid_in.read_ucd(input_file);
+  else if (false)
+    grid_in.read_msh(input_file);
+  else if (false)
+    grid_in.read_abaqus(input_file);
+  else if (true)
+    grid_in.read_unv(input_file);
 
   // 2) Output generated triangulation via GridOut
   GridOut       grid_out;

@@ -51,12 +51,12 @@
 
 #include <deal.II/numerics/data_out.h>
 
-#include <deal.II/tet/data_out.h>
-#include <deal.II/tet/fe_q.h>
-#include <deal.II/tet/grid_generator.h>
-#include <deal.II/tet/mapping_q.h>
-#include <deal.II/tet/partition.h>
-#include <deal.II/tet/quadrature_lib.h>
+#include <deal.II/simplex/data_out.h>
+#include <deal.II/simplex/fe_lib.h>
+#include <deal.II/simplex/grid_generator.h>
+#include <deal.II/simplex/quadrature_lib.h>
+
+#include "../include/partition.h"
 
 using namespace dealii;
 
@@ -272,7 +272,8 @@ test(const Triangulation<dim, spacedim> &tria,
       std::ofstream output(
         "solution_" + (dim == 2 ? std::string("tri.") : std::string("tet.")) +
         std::to_string(Utilities::MPI::this_mpi_process(comm)) + ".vtk");
-      Tet::data_out(dof_handler, solution, "solution", output);
+      Simplex::DataOut::write_vtk(
+        mapping, dof_handler, solution, "solution", output);
     }
 
   pcout << std::endl;
@@ -298,9 +299,9 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
     parallel::shared::Triangulation<dim>::partition_custom_signal);
 
   tr_2.signals.create.connect([&]() {
-    Tet::partition_triangulation(Utilities::MPI::n_mpi_processes(comm),
-                                 tr_2,
-                                 false);
+    Simplex::partition_triangulation(Utilities::MPI::n_mpi_processes(comm),
+                                     tr_2,
+                                     false);
   });
 
   // c) distributed triangulation
@@ -316,8 +317,8 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
   // ... create triangulation
   if (params.use_grid_generator)
     {
-      // ...via Tet::GridGenerator
-      Tet::GridGenerator::subdivided_hyper_rectangle(
+      // ...via Simplex::GridGenerator
+      Simplex::GridGenerator::subdivided_hyper_rectangle(
         *tria, params.repetitions, params.p1, params.p2, false);
     }
   else
@@ -334,9 +335,9 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
   // ... partition serial triangulation and create distributed triangulation
   if (tria_type == 0 || tria_type == 2)
     {
-      Tet::partition_triangulation(Utilities::MPI::n_mpi_processes(comm),
-                                   tr_1,
-                                   false);
+      Simplex::partition_triangulation(Utilities::MPI::n_mpi_processes(comm),
+                                       tr_1,
+                                       false);
 
       auto construction_data = TriangulationDescription::Utilities::
         create_description_from_triangulation(tr_1, comm);
@@ -354,20 +355,16 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
   grid_out.write_vtk(*tria, out);
 
   // 3) Select components
-  Tet::FE_Q<dim> fe(params.degree);
+  Simplex::FE_P<dim> fe(params.degree);
 
-  Tet::QGauss<dim> quad(dim == 2 ? (params.degree == 1 ? 3 : 7) :
-                                   (params.degree == 1 ? 4 : 10));
+  Simplex::PGauss<dim> quad(dim == 2 ? (params.degree == 1 ? 3 : 7) :
+                                       (params.degree == 1 ? 4 : 10));
 
-  Tet::QGauss<dim - 1> face_quad(dim == 2 ? (params.degree == 1 ? 2 : 3) :
-                                            (params.degree == 1 ? 3 : 7));
+  Simplex::PGauss<dim - 1> face_quad(dim == 2 ? (params.degree == 1 ? 2 : 3) :
+                                                (params.degree == 1 ? 3 : 7));
 
-#if false
-  Tet::MappingQ<dim> mapping(1);
-#else
-  Tet::FE_Q<dim>            fe_mapping(1);
+  Simplex::FE_P<dim>        fe_mapping(1);
   MappingIsoparametric<dim> mapping(fe_mapping);
-#endif
 
   // 4) Perform test (independent of mesh type)
   test(*tria, fe, quad, face_quad, mapping, params.p2[0]);

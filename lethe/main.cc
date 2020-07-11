@@ -57,16 +57,15 @@
 #include <deal.II/numerics/matrix_tools.h>
 #include <deal.II/numerics/vector_tools.h>
 
-#include <deal.II/tet/data_out.h>
-#include <deal.II/tet/fe_dgq.h>
-#include <deal.II/tet/fe_q.h>
-#include <deal.II/tet/grid_generator.h>
-#include <deal.II/tet/quadrature_lib.h>
+#include <deal.II/simplex/data_out.h>
+#include <deal.II/simplex/fe_lib.h>
+#include <deal.II/simplex/grid_generator.h>
+#include <deal.II/simplex/quadrature_lib.h>
 
 #include <fstream>
 #include <iostream>
 
-#define HEX
+//#define HEX
 
 using namespace dealii;
 enum simCase
@@ -224,13 +223,13 @@ private:
 #ifdef HEX
   FE_DGQ<dim> fe;
 #else
-  Tet::FE_DGQ<dim>                fe;
+  Simplex::FE_DGP<dim>            fe;
 #endif
 
 #ifdef HEX
   const MappingQ<dim> mapping;
 #else
-  Tet::FE_Q<dim>                  fe_mapping;
+  Simplex::FE_P<dim>              fe_mapping;
   const MappingIsoparametric<dim> mapping;
 #endif
   DoFHandler<dim> dof_handler;
@@ -296,10 +295,10 @@ DGHeat<dim>::make_cube_grid(int refinements)
   GridGenerator::hyper_cube(triangulation, -1, 1);
   triangulation.refine_global(ref);
 #else
-  Tet::GridGenerator::subdivided_hyper_cube(triangulation,
-                                            Utilities::pow(2, ref),
-                                            -1.0,
-                                            +1.0);
+  Simplex::GridGenerator::subdivided_hyper_cube(triangulation,
+                                                Utilities::pow(2, ref),
+                                                -1.0,
+                                                +1.0);
 #endif
 
   std::cout << "   Number of active cells: " << triangulation.n_active_cells()
@@ -556,11 +555,11 @@ DGHeat<dim>::assemble_system()
 
   QGauss<dim - 1> face_quad(degree + 1);
 #else
-  Tet::QGauss<dim> quad(dim == 2 ? (degree == 1 ? 3 : 7) :
-                                   (degree == 1 ? 4 : 10));
+  Simplex::PGauss<dim> quad(dim == 2 ? (degree == 1 ? 3 : 7) :
+                                       (degree == 1 ? 4 : 10));
 
-  Tet::QGauss<dim - 1> face_quad(dim == 2 ? (degree == 1 ? 2 : 3) :
-                                            (degree == 1 ? 3 : 7));
+  Simplex::PGauss<dim - 1> face_quad(dim == 2 ? (degree == 1 ? 2 : 3) :
+                                                (degree == 1 ? 3 : 7));
 #endif
 
   ScratchData<dim> scratch_data(mapping, fe, quad, face_quad);
@@ -623,7 +622,8 @@ DGHeat<dim>::output_results(unsigned int it) const
   data_out.build_patches();
   data_out.write_vtk(output);
 #else
-  Tet::data_out(dof_handler, solution, "solution", output);
+  Simplex::DataOut::write_vtk(
+    mapping, dof_handler, solution, "solution", output);
 #endif
 }
 
@@ -638,8 +638,8 @@ DGHeat<dim>::calculateL2Error()
 #ifdef HEX
   QGauss<dim> quadrature_formula(degree + 1);
 #else
-  Tet::QGauss<dim> quadrature_formula(dim == 2 ? (degree == 1 ? 3 : 7) :
-                                                 (degree == 1 ? 4 : 10));
+  Simplex::PGauss<dim> quadrature_formula(dim == 2 ? (degree == 1 ? 3 : 7) :
+                                                     (degree == 1 ? 4 : 10));
 #endif
 
   FEValues<dim> fe_values(mapping,
@@ -749,7 +749,7 @@ main()
   // MMS
   {
     std::cout << "Solving MMS problem 2D " << std::endl;
-    DGHeat<3> mms_problem_2d(MMS, 2, 5);
+    DGHeat<3> mms_problem_2d(MMS, 2, 4);
     mms_problem_2d.run();
   }
   return 0;

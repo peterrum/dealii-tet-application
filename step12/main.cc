@@ -71,11 +71,10 @@
 
 #include <deal.II/meshworker/mesh_loop.h>
 
-#include <deal.II/tet/data_out.h>
-#include <deal.II/tet/fe_dgq.h>
-#include <deal.II/tet/fe_q.h>
-#include <deal.II/tet/grid_generator.h>
-#include <deal.II/tet/quadrature_lib.h>
+#include <deal.II/simplex/data_out.h>
+#include <deal.II/simplex/fe_lib.h>
+#include <deal.II/simplex/grid_generator.h>
+#include <deal.II/simplex/quadrature_lib.h>
 
 // Like in all programs, we finish this section by including the needed C++
 // headers and declaring we want to use objects in the dealii namespace without
@@ -258,7 +257,7 @@ namespace Step12
 #ifdef HEX
     const MappingQ1<dim> mapping;
 #else
-    Tet::FE_Q<dim>                  fe_mapping;
+    Simplex::FE_P<dim>              fe_mapping;
     const MappingIsoparametric<dim> mapping;
 #endif
 
@@ -266,7 +265,7 @@ namespace Step12
 #ifdef HEX
     FE_DGQ<dim> fe;
 #else
-    Tet::FE_DGQ<dim>                fe;
+    Simplex::FE_DGP<dim>            fe;
 #endif
     DoFHandler<dim> dof_handler;
 
@@ -362,7 +361,8 @@ namespace Step12
             for (unsigned int j = 0; j < n_dofs; ++j)
               {
                 // std::cout << q_points[point] << " " << beta_q << " " <<
-                // fe_v.shape_grad(i, point) << " " << fe_v.shape_value(j, point)
+                // fe_v.shape_grad(i, point) << " " << fe_v.shape_value(j,
+                // point)
                 // << " " << JxW[point] << std::endl;
 
                 copy_data.cell_matrix(i, j) +=
@@ -492,11 +492,11 @@ namespace Step12
 
     QGauss<dim - 1> face_quad(degree + 1);
 #else
-    Tet::QGauss<dim> quad(dim == 2 ? (degree == 1 ? 3 : 7) :
-                                     (degree == 1 ? 4 : 10));
+    Simplex::PGauss<dim> quad(dim == 2 ? (degree == 1 ? 3 : 7) :
+                                         (degree == 1 ? 4 : 10));
 
-    Tet::QGauss<dim - 1> face_quad(dim == 2 ? (degree == 1 ? 2 : 3) :
-                                              (degree == 1 ? 3 : 7));
+    Simplex::PGauss<dim - 1> face_quad(dim == 2 ? (degree == 1 ? 2 : 3) :
+                                                  (degree == 1 ? 3 : 7));
 #endif
 
     ScratchData<dim> scratch_data(mapping, fe, quad, face_quad);
@@ -634,7 +634,7 @@ namespace Step12
 
     data_out.write_vtk(output);
 #else
-    Tet::data_out(dof_handler, solution, "u", output);
+    Simplex::DataOut::write_vtk(mapping, dof_handler, solution, "u", output);
 #endif
 
     {
@@ -675,7 +675,7 @@ namespace Step12
             // triangulation.refine_global(3);
             GridGenerator::subdivided_hyper_cube(triangulation, 16);
 #else
-            Tet::GridGenerator::subdivided_hyper_cube(triangulation, 2);
+            Simplex::GridGenerator::subdivided_hyper_cube(triangulation, 2);
 #endif
           }
         else
