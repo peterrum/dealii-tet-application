@@ -14,14 +14,8 @@
  * ---------------------------------------------------------------------
 
  *
- * Author: Wolfgang Bangerth, Bruno Blais
  */
 
-
-// @sect3{Include files}
-
-// The first few (many?) include files have already been used in the previous
-// example, so we will not explain their meaning here again.
 #include <deal.II/base/convergence_table.h>
 #include <deal.II/base/function.h>
 #include <deal.II/base/logstream.h>
@@ -68,11 +62,6 @@
 //#define HEX
 
 using namespace dealii;
-enum simCase
-{
-  TaylorCouette,
-  MMS
-};
 
 template <int dim>
 struct ScratchData
@@ -138,75 +127,36 @@ struct CopyData
 };
 
 template <int dim>
-class RightHandSideMMS : public Function<dim>
+class RightHandSideFunction : public Function<dim>
 {
 public:
-  RightHandSideMMS()
-    : Function<dim>()
+  RightHandSideFunction()
   {}
 
   virtual double
-  value(const Point<dim> &p, const unsigned int component = 0) const;
+  value(const Point<dim> &p, const unsigned int /*component*/ = 0) const
+  {
+    if (dim == 2)
+      return -2. * M_PI * M_PI * std::sin(M_PI * p(0)) * std::sin(M_PI * p(1));
+    else /* if(dim == 3)*/
+      return -3. * M_PI * M_PI * std::sin(M_PI * p(0)) * std::sin(M_PI * p(1)) *
+             std::sin(M_PI * p(2));
+  }
 };
-
-template <int dim>
-class BoundaryValues : public Function<dim>
-{
-public:
-  BoundaryValues()
-    : Function<dim>()
-  {}
-
-  virtual double
-  value(const Point<dim> &p, const unsigned int component = 0) const;
-};
-
-template <int dim>
-double
-RightHandSideMMS<dim>::value(const Point<dim> &p,
-                             const unsigned int /*component*/) const
-{
-  double return_value = 0.0;
-  double x            = p(0);
-  double y            = p(1);
-  double z            = p(2);
-
-  return_value = -3. * M_PI * M_PI * std::sin(M_PI * x) * std::sin(M_PI * y) *
-                 std::sin(M_PI * z);
-
-  return return_value;
-}
-
-// As boundary values, we choose $x^2+y^2$ in 2D, and $x^2+y^2+z^2$ in 3D. This
-// happens to be equal to the square of the vector from the origin to the
-// point at which we would like to evaluate the function, irrespective of the
-// dimension. So that is what we return:
-template <int dim>
-double
-BoundaryValues<dim>::value(const Point<dim> &p,
-                           const unsigned int /*component*/) const
-{
-  if (p.square() > 0.9)
-    return 1;
-  else
-    return 0.;
-}
 
 template <int dim>
 class DGHeat
 {
 public:
-  DGHeat(simCase scase, unsigned int initial_level, unsigned int final_level);
+  DGHeat(unsigned int degree,
+         unsigned int initial_level,
+         unsigned int final_level);
   void
   run();
 
 private:
   void
   make_grid(int refinements = -1);
-  void
-  make_cube_grid(int refinements = -1);
-  void
-  make_ring_grid(int refinements = -1);
   void
   setup_system();
   void
@@ -220,22 +170,24 @@ private:
 
   Triangulation<dim> triangulation;
 
-#ifdef HEX
-  FE_DGQ<dim> fe;
-#else
-  Simplex::FE_DGP<dim>            fe;
-#endif
+  const unsigned int degree;
 
 #ifdef HEX
+  FE_DGQ<dim>         fe;
   const MappingQ<dim> mapping;
+  QGauss<dim>         quad;
+  QGauss<dim - 1>     face_quad;
 #else
-  Simplex::FE_P<dim>              fe_mapping;
+  Simplex::FE_DGP<dim>            fe;
   const MappingIsoparametric<dim> mapping;
+  Simplex::PGauss<dim>            quad;
+  Simplex::PGauss<dim - 1>        face_quad;
 #endif
+
   DoFHandler<dim> dof_handler;
 
 
-  RightHandSideMMS<dim> right_hand_side;
+  RightHandSideFunction<dim> right_hand_side;
 
 
   SparsityPattern      sparsity_pattern;
@@ -247,8 +199,6 @@ private:
 
   ConvergenceTable error_table;
 
-  simCase simulation_case;
-
   unsigned int initial_refinement_level;
   unsigned int number_refinement;
 };
@@ -256,19 +206,22 @@ private:
 
 
 template <int dim>
-DGHeat<dim>::DGHeat(simCase      scase,
+DGHeat<dim>::DGHeat(unsigned int degree,
                     unsigned int initial_refinement,
                     unsigned int number_refinement)
+  : degree(degree)
 #ifdef HEX
-  : fe(1 /*degree*/)
+  , fe(degree)
   , mapping(1)
+  , quad(degree + 1)
+  , face_quad(degree + 1)
 #else
-  : fe(2 /*degree*/)
-  , fe_mapping(1)
-  , mapping(fe_mapping)
+  , fe(degree)
+  , mapping(Simplex::FE_P<dim>(1))
+  , quad(dim == 2 ? (degree == 1 ? 3 : 7) : (degree == 1 ? 4 : 10))
+  , face_quad(dim == 2 ? (degree == 1 ? 2 : 3) : (degree == 1 ? 3 : 7))
 #endif
   , dof_handler(triangulation)
-  , simulation_case(scase)
   , initial_refinement_level(initial_refinement)
   , number_refinement(number_refinement)
 {}
@@ -279,17 +232,8 @@ DGHeat<dim>::make_grid(int refinements)
 {
   triangulation.clear();
 
-  if (simulation_case == MMS)
-    make_cube_grid(refinements);
-  else if (simulation_case == TaylorCouette)
-    make_ring_grid(refinements);
-}
-
-template <int dim>
-void
-DGHeat<dim>::make_cube_grid(int refinements)
-{
-  int ref = refinements == -1 ? initial_refinement_level : refinements;
+  const unsigned int ref =
+    refinements == -1 ? initial_refinement_level : refinements;
 
 #ifdef HEX
   GridGenerator::hyper_cube(triangulation, -1, 1);
@@ -304,25 +248,6 @@ DGHeat<dim>::make_cube_grid(int refinements)
   std::cout << "   Number of active cells: " << triangulation.n_active_cells()
             << std::endl
             << "   Total number of cells: " << triangulation.n_cells()
-            << std::endl;
-}
-
-template <int dim>
-void
-DGHeat<dim>::make_ring_grid(int /*refinements*/)
-{
-  const double inner_radius = 0.25, outer_radius = 1.0;
-  if (dim == 2)
-    center = Point<dim>(0, 0);
-  GridGenerator::hyper_shell(
-    triangulation, center, inner_radius, outer_radius, 10, true);
-
-  triangulation.refine_global(initial_refinement_level);
-
-  std::cout << "Number of active cells: " << triangulation.n_active_cells()
-            << std::endl;
-
-  std::cout << "Number of total cells: " << triangulation.n_cells()
             << std::endl;
 }
 
@@ -352,7 +277,6 @@ void
 DGHeat<dim>::assemble_system()
 {
   using Iterator = typename DoFHandler<dim>::active_cell_iterator;
-  const BoundaryValues<dim> boundary_function;
 
   auto cell_worker = [&](const Iterator &  cell,
                          ScratchData<dim> &scratch_data,
@@ -381,10 +305,9 @@ DGHeat<dim>::assemble_system()
                   * JxW[point];               // dx
               }
 
-            if (simulation_case == MMS)
-              // Right Hand Side
-              copy_data.cell_rhs(i) +=
-                (fe_v.shape_value(i, point) * f[point] * JxW[point]);
+            // Right Hand Side
+            copy_data.cell_rhs(i) +=
+              (fe_v.shape_value(i, point) * f[point] * JxW[point]);
           }
       }
   };
@@ -403,9 +326,6 @@ DGHeat<dim>::assemble_system()
     const std::vector<double> &JxW  = fe_face.get_JxW_values();
 
     const std::vector<Tensor<1, dim>> &normals = fe_face.get_normal_vectors();
-    std::vector<double>                g(q_points.size());
-
-    boundary_function.value_list(q_points, g);
 
     double h;
     if (dim == 2)
@@ -426,43 +346,23 @@ DGHeat<dim>::assemble_system()
     const double beta = 10.;
 
     for (unsigned int point = 0; point < q_points.size(); ++point)
-      {
-        for (unsigned int i = 0; i < n_facet_dofs; ++i)
+      for (unsigned int i = 0; i < n_facet_dofs; ++i)
+        for (unsigned int j = 0; j < n_facet_dofs; ++j)
           {
-            for (unsigned int j = 0; j < n_facet_dofs; ++j)
-              {
-                copy_data.cell_matrix(i, j) +=
-                  -normals[point] *
-                  fe_face.shape_grad(i, point)    // n*\nabla \phi_i
-                  * fe_face.shape_value(j, point) // \phi_j
-                  * JxW[point];                   // dx
+            copy_data.cell_matrix(i, j) +=
+              -normals[point] * fe_face.shape_grad(i, point) // n*\nabla \phi_i
+              * fe_face.shape_value(j, point)                // \phi_j
+              * JxW[point];                                  // dx
 
-                copy_data.cell_matrix(i, j) +=
-                  -fe_face.shape_value(i, point) // \phi_i
-                  * fe_face.shape_grad(j, point) *
-                  normals[point] // n*\nabla \phi_j
-                  * JxW[point];  // dx
+            copy_data.cell_matrix(i, j) +=
+              -fe_face.shape_value(i, point)                  // \phi_i
+              * fe_face.shape_grad(j, point) * normals[point] // n*\nabla \phi_j
+              * JxW[point];                                   // dx
 
-                copy_data.cell_matrix(i, j) +=
-                  beta * 1. / h * fe_face.shape_value(i, point) // \phi_i
-                  * fe_face.shape_value(j, point) * JxW[point]; // dx
-              }
+            copy_data.cell_matrix(i, j) +=
+              beta * 1. / h * fe_face.shape_value(i, point) // \phi_i
+              * fe_face.shape_value(j, point) * JxW[point]; // dx
           }
-
-        if (simulation_case == TaylorCouette)
-          for (unsigned int i = 0; i < n_facet_dofs; ++i)
-            {
-              copy_data.cell_rhs(i) += beta * 1. / h *
-                                       fe_face.shape_value(i, point) // \phi_i
-                                       * g[point]                    // g
-                                       * JxW[point];                 // dx
-              copy_data.cell_rhs(i) +=
-                -normals[point] *
-                fe_face.shape_grad(i, point) // n*\nabla \phi_i
-                * g[point]                   // g
-                * JxW[point];                // dx
-            }
-      }
   };
 
   auto face_worker = [&](const Iterator &    cell,
@@ -548,19 +448,6 @@ DGHeat<dim>::assemble_system()
       }
   };
 
-  const unsigned int degree = dof_handler.get_fe().degree;
-
-#ifdef HEX
-  QGauss<dim> quad(degree + 1);
-
-  QGauss<dim - 1> face_quad(degree + 1);
-#else
-  Simplex::PGauss<dim> quad(dim == 2 ? (degree == 1 ? 3 : 7) :
-                                       (degree == 1 ? 4 : 10));
-
-  Simplex::PGauss<dim - 1> face_quad(dim == 2 ? (degree == 1 ? 2 : 3) :
-                                                (degree == 1 ? 3 : 7));
-#endif
 
   ScratchData<dim> scratch_data(mapping, fe, quad, face_quad);
   CopyData         copy_data;
@@ -606,8 +493,7 @@ DGHeat<dim>::output_results(unsigned int it) const
                                    "solution-3d-tet-case-");
 #endif
 
-  std::string fname = dimension + Utilities::int_to_string(simulation_case) +
-                      "-" + Utilities::int_to_string(it) + ".vtk";
+  std::string fname = dimension + Utilities::int_to_string(it) + ".vtk";
 
   std::cout << "  Writing solution to <" << fname << ">" << std::endl;
 
@@ -633,18 +519,9 @@ template <int dim>
 void
 DGHeat<dim>::calculateL2Error()
 {
-  const unsigned int degree = dof_handler.get_fe().degree;
-
-#ifdef HEX
-  QGauss<dim> quadrature_formula(degree + 1);
-#else
-  Simplex::PGauss<dim> quadrature_formula(dim == 2 ? (degree == 1 ? 3 : 7) :
-                                                     (degree == 1 ? 4 : 10));
-#endif
-
   FEValues<dim> fe_values(mapping,
                           fe,
-                          quadrature_formula,
+                          quad,
                           update_values | update_gradients |
                             update_quadrature_points | update_JxW_values);
 
@@ -653,38 +530,26 @@ DGHeat<dim>::calculateL2Error()
   std::vector<types::global_dof_index> local_dof_indices(
     dofs_per_cell); //  Local connectivity
 
-  const unsigned int n_q_points = quadrature_formula.size();
+  const unsigned int n_q_points = quad.size();
 
   double l2error = 0.;
 
   // loop over elements
-  typename DoFHandler<dim>::active_cell_iterator cell =
-                                                   dof_handler.begin_active(),
-                                                 endc = dof_handler.end();
-  for (; cell != endc; ++cell)
+  for (const auto &cell : dof_handler.active_cell_iterators())
     {
       fe_values.reinit(cell);
 
-      // Retrieve the effective "connectivity matrix" for this element
       cell->get_dof_indices(local_dof_indices);
-
 
       for (unsigned int q = 0; q < n_q_points; q++)
         {
-          const double x = fe_values.quadrature_point(q)[0];
-          const double y = fe_values.quadrature_point(q)[1];
-          // if (dim > 2)
-          const double z = fe_values.quadrature_point(q)[2];
+          const double u_exact =
+            dim == 2 ? -std::sin(M_PI * fe_values.quadrature_point(q)[0]) *
+                         std::sin(M_PI * fe_values.quadrature_point(q)[1]) :
+                       -std::sin(M_PI * fe_values.quadrature_point(q)[0]) *
+                         std::sin(M_PI * fe_values.quadrature_point(q)[1]) *
+                         std::sin(M_PI * fe_values.quadrature_point(q)[2]);
 
-          const double r       = std::sqrt(x * x + y * y);
-          const double lnratio = std::log(1. / 0.25);
-          double       u_exact = 0.;
-          if (simulation_case == TaylorCouette && false)
-            u_exact = 1. / (lnratio)*std::log(r / 0.25);
-          if (simulation_case == MMS)
-            u_exact =
-              -std::sin(M_PI * x) * std::sin(M_PI * y) * std::sin(M_PI * z);
-          ;
           double u_sim = 0;
 
           // Find the values of x and u_h (the finite element solution) at the
@@ -738,19 +603,22 @@ main()
 {
   deallog.depth_console(0);
 
-  // Taylor couette
-  if (false)
-    {
-      std::cout << "Solving Taylor-Couette problem 2D  " << std::endl;
-      DGHeat<2> taylorCouette_problem_2d(TaylorCouette, 1, 6);
-      taylorCouette_problem_2d.run();
-    }
-
-  // MMS
   {
-    std::cout << "Solving MMS problem 2D " << std::endl;
-    DGHeat<3> mms_problem_2d(MMS, 2, 4);
-    mms_problem_2d.run();
+    DGHeat<2> problem(1 /*=degree*/, 2, 4);
+    problem.run();
   }
+  {
+    DGHeat<2> problem(2 /*=degree*/, 2, 4);
+    problem.run();
+  }
+  {
+    DGHeat<3> problem(1 /*=degree*/, 2, 3);
+    problem.run();
+  }
+  {
+    DGHeat<3> problem(2 /*=degree*/, 2, 3);
+    problem.run();
+  }
+
   return 0;
 }
