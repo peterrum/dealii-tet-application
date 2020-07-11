@@ -148,11 +148,60 @@ template <int dim>
 class DGHeat
 {
 public:
-  DGHeat(unsigned int degree,
-         unsigned int initial_level,
-         unsigned int final_level);
+  DGHeat(const bool           HEX,
+         FiniteElement<dim> * fe,
+         Mapping<dim> *       mapping,
+         Quadrature<dim> *    quad,
+         Quadrature<dim - 1> *face_quad,
+         unsigned int         initial_refinement,
+         unsigned int         number_refinement)
+    : HEX(HEX)
+    , fe(fe)
+    , mapping(mapping)
+    , quad(quad)
+    , face_quad(face_quad)
+    , dof_handler(triangulation)
+    , initial_refinement_level(initial_refinement)
+    , number_refinement(number_refinement)
+  {}
+
+  static std::unique_ptr<DGHeat<dim>>
+  H(unsigned int degree,
+    unsigned int initial_refinement,
+    unsigned int number_refinement)
+  {
+    return std::make_unique<DGHeat<dim>>(true,
+                                         new FE_DGQ<dim>(degree),
+                                         new MappingQ<dim>(1),
+                                         new QGauss<dim>(degree + 1),
+                                         new QGauss<dim - 1>(degree + 1),
+                                         initial_refinement,
+                                         number_refinement);
+  }
+
+  static std::unique_ptr<DGHeat<dim>>
+  T(unsigned int degree,
+    unsigned int initial_refinement,
+    unsigned int number_refinement)
+  {
+    return std::make_unique<DGHeat<dim>>(
+      false,
+      new Simplex::FE_DGP<dim>(degree),
+      new MappingIsoparametric<dim>(Simplex::FE_P<dim>(1)),
+      new Simplex::PGauss<dim>(dim == 2 ? (degree == 1 ? 3 : 7) :
+                                          (degree == 1 ? 4 : 10)),
+      new Simplex::PGauss<dim - 1>(dim == 2 ? (degree == 1 ? 2 : 3) :
+                                              (degree == 1 ? 3 : 7)),
+      initial_refinement,
+      number_refinement);
+  }
+
+
+
   void
   run();
+
+
 
 private:
   void
@@ -170,19 +219,12 @@ private:
 
   Triangulation<dim> triangulation;
 
-  const unsigned int degree;
+  bool HEX;
 
-#ifdef HEX
-  FE_DGQ<dim>         fe;
-  const MappingQ<dim> mapping;
-  QGauss<dim>         quad;
-  QGauss<dim - 1>     face_quad;
-#else
-  Simplex::FE_DGP<dim>            fe;
-  const MappingIsoparametric<dim> mapping;
-  Simplex::PGauss<dim>            quad;
-  Simplex::PGauss<dim - 1>        face_quad;
-#endif
+  std::unique_ptr<FiniteElement<dim>>  fe;
+  const std::unique_ptr<Mapping<dim>>  mapping;
+  std::unique_ptr<Quadrature<dim>>     quad;
+  std::unique_ptr<Quadrature<dim - 1>> face_quad;
 
   DoFHandler<dim> dof_handler;
 
@@ -204,28 +246,6 @@ private:
 };
 
 
-
-template <int dim>
-DGHeat<dim>::DGHeat(unsigned int degree,
-                    unsigned int initial_refinement,
-                    unsigned int number_refinement)
-  : degree(degree)
-#ifdef HEX
-  , fe(degree)
-  , mapping(1)
-  , quad(degree + 1)
-  , face_quad(degree + 1)
-#else
-  , fe(degree)
-  , mapping(Simplex::FE_P<dim>(1))
-  , quad(dim == 2 ? (degree == 1 ? 3 : 7) : (degree == 1 ? 4 : 10))
-  , face_quad(dim == 2 ? (degree == 1 ? 2 : 3) : (degree == 1 ? 3 : 7))
-#endif
-  , dof_handler(triangulation)
-  , initial_refinement_level(initial_refinement)
-  , number_refinement(number_refinement)
-{}
-
 template <int dim>
 void
 DGHeat<dim>::make_grid(int refinements)
@@ -235,15 +255,16 @@ DGHeat<dim>::make_grid(int refinements)
   const unsigned int ref =
     refinements == -1 ? initial_refinement_level : refinements;
 
-#ifdef HEX
-  GridGenerator::hyper_cube(triangulation, -1, 1);
-  triangulation.refine_global(ref);
-#else
-  Simplex::GridGenerator::subdivided_hyper_cube(triangulation,
-                                                Utilities::pow(2, ref),
-                                                -1.0,
-                                                +1.0);
-#endif
+  if (HEX)
+    GridGenerator::subdivided_hyper_cube(triangulation,
+                                         Utilities::pow(2, ref),
+                                         -1.0,
+                                         +1.0);
+  else
+    Simplex::GridGenerator::subdivided_hyper_cube(triangulation,
+                                                  Utilities::pow(2, ref),
+                                                  -1.0,
+                                                  +1.0);
 
   std::cout << "   Number of active cells: " << triangulation.n_active_cells()
             << std::endl
@@ -256,7 +277,7 @@ template <int dim>
 void
 DGHeat<dim>::setup_system()
 {
-  dof_handler.distribute_dofs(fe);
+  dof_handler.distribute_dofs(*fe);
 
   std::cout << "   Number of degrees of freedom: " << dof_handler.n_dofs()
             << std::endl;
@@ -329,17 +350,19 @@ DGHeat<dim>::assemble_system()
 
     double h;
     if (dim == 2)
-#ifdef HEX
-      h = std::sqrt(4. * cell->measure() / M_PI);
-#else
-      h = std::sqrt(4. * (4.0 / triangulation.n_cells()) / M_PI);
-#endif
+      {
+        if (HEX)
+          h = std::sqrt(4. * cell->measure() / M_PI);
+        else
+          h = std::sqrt(4. * (4.0 / triangulation.n_cells()) / M_PI);
+      }
     else if (dim == 3)
-#ifdef HEX
-      h = pow(6 * cell->measure() / M_PI, 1. / 3.);
-#else
-      h = pow(6 * (8.0 / triangulation.n_cells()) / M_PI, 1. / 3.);
-#endif
+      {
+        if (HEX)
+          h = pow(6 * cell->measure() / M_PI, 1. / 3.);
+        else
+          h = pow(6 * (8.0 / triangulation.n_cells()) / M_PI, 1. / 3.);
+      }
 
 
 
@@ -393,17 +416,19 @@ DGHeat<dim>::assemble_system()
 
     double h;
     if (dim == 2)
-#ifdef HEX
-      h = std::sqrt(4. * cell->measure() / M_PI);
-#else
-      h = std::sqrt(4. * (4.0 / triangulation.n_cells()) / M_PI);
-#endif
+      {
+        if (HEX)
+          h = std::sqrt(4. * cell->measure() / M_PI);
+        else
+          h = std::sqrt(4. * (4.0 / triangulation.n_cells()) / M_PI);
+      }
     else if (dim == 3)
-#ifdef HEX
-      h = pow(6 * cell->measure() / M_PI, 1. / 3.);
-#else
-      h = pow(6 * (8.0 / triangulation.n_cells()) / M_PI, 1. / 3.);
-#endif
+      {
+        if (HEX)
+          h = pow(6 * cell->measure() / M_PI, 1. / 3.);
+        else
+          h = pow(6 * (8.0 / triangulation.n_cells()) / M_PI, 1. / 3.);
+      }
 
     const double beta = 10.;
 
@@ -449,7 +474,7 @@ DGHeat<dim>::assemble_system()
   };
 
 
-  ScratchData<dim> scratch_data(mapping, fe, quad, face_quad);
+  ScratchData<dim> scratch_data(*mapping, *fe, *quad, *face_quad);
   CopyData         copy_data;
 
   MeshWorker::mesh_loop(dof_handler.begin_active(),
@@ -485,13 +510,10 @@ DGHeat<dim>::output_results(unsigned int it) const
 {
   return;
 
-#ifdef HEX
-  std::string dimension(dim == 2 ? "solution-2d-hex-case-" :
-                                   "solution-3d-hex-case-");
-#else
-  std::string dimension(dim == 2 ? "solution-2d-tet-case-" :
-                                   "solution-3d-tet-case-");
-#endif
+  std::string type = HEX ? "hex" : "tet";
+
+  std::string dimension(dim == 2 ? "solution-2d-" + type + "-case-" :
+                                   "solution-3d-" + type + "-case-");
 
   std::string fname = dimension + Utilities::int_to_string(it) + ".vtk";
 
@@ -499,18 +521,21 @@ DGHeat<dim>::output_results(unsigned int it) const
 
   std::ofstream output(fname.c_str());
 
-#ifdef HEX
-  DataOut<dim> data_out;
+  if (HEX)
+    {
+      DataOut<dim> data_out;
 
-  data_out.attach_dof_handler(dof_handler);
-  data_out.add_data_vector(solution, "solution");
+      data_out.attach_dof_handler(dof_handler);
+      data_out.add_data_vector(solution, "solution");
 
-  data_out.build_patches();
-  data_out.write_vtk(output);
-#else
-  Simplex::DataOut::write_vtk(
-    mapping, dof_handler, solution, "solution", output);
-#endif
+      data_out.build_patches();
+      data_out.write_vtk(output);
+    }
+  else
+    {
+      Simplex::DataOut::write_vtk(
+        *mapping, dof_handler, solution, "solution", output);
+    }
 }
 
 // Find the l2 norm of the error between the finite element sol'n and the exact
@@ -519,18 +544,18 @@ template <int dim>
 void
 DGHeat<dim>::calculateL2Error()
 {
-  FEValues<dim> fe_values(mapping,
-                          fe,
-                          quad,
+  FEValues<dim> fe_values(*mapping,
+                          *fe,
+                          *quad,
                           update_values | update_gradients |
                             update_quadrature_points | update_JxW_values);
 
   const unsigned int dofs_per_cell =
-    fe.dofs_per_cell; // This gives you dofs per cell
+    fe->dofs_per_cell; // This gives you dofs per cell
   std::vector<types::global_dof_index> local_dof_indices(
     dofs_per_cell); //  Local connectivity
 
-  const unsigned int n_q_points = quad.size();
+  const unsigned int n_q_points = quad->size();
 
   double l2error = 0.;
 
@@ -604,20 +629,37 @@ main()
   deallog.depth_console(0);
 
   {
-    DGHeat<2> problem(1 /*=degree*/, 2, 4);
-    problem.run();
+    auto problem = DGHeat<2>::T(1 /*=degree*/, 2, 4);
+    problem->run();
   }
   {
-    DGHeat<2> problem(2 /*=degree*/, 2, 4);
-    problem.run();
+    auto problem = DGHeat<2>::T(2 /*=degree*/, 2, 4);
+    problem->run();
   }
   {
-    DGHeat<3> problem(1 /*=degree*/, 2, 3);
-    problem.run();
+    auto problem = DGHeat<3>::T(1 /*=degree*/, 2, 3);
+    problem->run();
   }
   {
-    DGHeat<3> problem(2 /*=degree*/, 2, 3);
-    problem.run();
+    auto problem = DGHeat<3>::T(2 /*=degree*/, 2, 3);
+    problem->run();
+  }
+
+  {
+    auto problem = DGHeat<2>::H(1 /*=degree*/, 2, 4);
+    problem->run();
+  }
+  {
+    auto problem = DGHeat<2>::H(2 /*=degree*/, 2, 4);
+    problem->run();
+  }
+  {
+    auto problem = DGHeat<3>::H(1 /*=degree*/, 2, 3);
+    problem->run();
+  }
+  {
+    auto problem = DGHeat<3>::H(2 /*=degree*/, 2, 3);
+    problem->run();
   }
 
   return 0;
