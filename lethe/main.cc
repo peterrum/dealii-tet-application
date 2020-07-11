@@ -148,14 +148,14 @@ template <int dim>
 class DGHeat
 {
 public:
-  DGHeat(const bool           HEX,
+  DGHeat(const bool           hex,
          FiniteElement<dim> * fe,
          Mapping<dim> *       mapping,
          Quadrature<dim> *    quad,
          Quadrature<dim - 1> *face_quad,
          unsigned int         initial_refinement,
          unsigned int         number_refinement)
-    : HEX(HEX)
+    : hex(hex)
     , fe(fe)
     , mapping(mapping)
     , quad(quad)
@@ -166,9 +166,9 @@ public:
   {}
 
   static std::unique_ptr<DGHeat<dim>>
-  H(unsigned int degree,
-    unsigned int initial_refinement,
-    unsigned int number_refinement)
+  HEX(unsigned int degree,
+      unsigned int initial_refinement,
+      unsigned int number_refinement)
   {
     return std::make_unique<DGHeat<dim>>(true,
                                          new FE_DGQ<dim>(degree),
@@ -180,9 +180,9 @@ public:
   }
 
   static std::unique_ptr<DGHeat<dim>>
-  T(unsigned int degree,
-    unsigned int initial_refinement,
-    unsigned int number_refinement)
+  TET(unsigned int degree,
+      unsigned int initial_refinement,
+      unsigned int number_refinement)
   {
     return std::make_unique<DGHeat<dim>>(
       false,
@@ -219,7 +219,7 @@ private:
 
   Triangulation<dim> triangulation;
 
-  bool HEX;
+  bool hex;
 
   std::unique_ptr<FiniteElement<dim>>  fe;
   const std::unique_ptr<Mapping<dim>>  mapping;
@@ -255,7 +255,7 @@ DGHeat<dim>::make_grid(int refinements)
   const unsigned int ref =
     refinements == -1 ? initial_refinement_level : refinements;
 
-  if (HEX)
+  if (hex)
     GridGenerator::subdivided_hyper_cube(triangulation,
                                          Utilities::pow(2, ref),
                                          -1.0,
@@ -266,10 +266,11 @@ DGHeat<dim>::make_grid(int refinements)
                                                   -1.0,
                                                   +1.0);
 
-  std::cout << "   Number of active cells: " << triangulation.n_active_cells()
-            << std::endl
-            << "   Total number of cells: " << triangulation.n_cells()
-            << std::endl;
+  // std::cout << "   Number of active cells: " <<
+  // triangulation.n_active_cells()
+  //          << std::endl
+  //          << "   Total number of cells: " << triangulation.n_cells()
+  //          << std::endl;
 }
 
 
@@ -279,8 +280,8 @@ DGHeat<dim>::setup_system()
 {
   dof_handler.distribute_dofs(*fe);
 
-  std::cout << "   Number of degrees of freedom: " << dof_handler.n_dofs()
-            << std::endl;
+  // std::cout << "   Number of degrees of freedom: " << dof_handler.n_dofs()
+  //          << std::endl;
 
   DynamicSparsityPattern dsp(dof_handler.n_dofs());
   DoFTools::make_flux_sparsity_pattern(dof_handler, dsp);
@@ -351,14 +352,14 @@ DGHeat<dim>::assemble_system()
     double h;
     if (dim == 2)
       {
-        if (HEX)
+        if (hex)
           h = std::sqrt(4. * cell->measure() / M_PI);
         else
           h = std::sqrt(4. * (4.0 / triangulation.n_cells()) / M_PI);
       }
     else if (dim == 3)
       {
-        if (HEX)
+        if (hex)
           h = pow(6 * cell->measure() / M_PI, 1. / 3.);
         else
           h = pow(6 * (8.0 / triangulation.n_cells()) / M_PI, 1. / 3.);
@@ -417,14 +418,14 @@ DGHeat<dim>::assemble_system()
     double h;
     if (dim == 2)
       {
-        if (HEX)
+        if (hex)
           h = std::sqrt(4. * cell->measure() / M_PI);
         else
           h = std::sqrt(4. * (4.0 / triangulation.n_cells()) / M_PI);
       }
     else if (dim == 3)
       {
-        if (HEX)
+        if (hex)
           h = pow(6 * cell->measure() / M_PI, 1. / 3.);
         else
           h = pow(6 * (8.0 / triangulation.n_cells()) / M_PI, 1. / 3.);
@@ -500,8 +501,10 @@ DGHeat<dim>::solve()
 
   // We have made one addition, though: since we suppress output from the
   // linear solvers, we have to print the number of iterations by hand.
-  std::cout << "   " << solver_control.last_step()
-            << " CG iterations needed to obtain convergence." << std::endl;
+  // std::cout << "   " << solver_control.last_step()
+  //          << " CG iterations needed to obtain convergence." << std::endl;
+
+  error_table.add_value("iterations", solver_control.last_step());
 }
 
 template <int dim>
@@ -510,7 +513,7 @@ DGHeat<dim>::output_results(unsigned int it) const
 {
   return;
 
-  std::string type = HEX ? "hex" : "tet";
+  std::string type = hex ? "hex" : "tet";
 
   std::string dimension(dim == 2 ? "solution-2d-" + type + "-case-" :
                                    "solution-3d-" + type + "-case-");
@@ -521,7 +524,7 @@ DGHeat<dim>::output_results(unsigned int it) const
 
   std::ofstream output(fname.c_str());
 
-  if (HEX)
+  if (hex)
     {
       DataOut<dim> data_out;
 
@@ -592,7 +595,7 @@ DGHeat<dim>::calculateL2Error()
     }
 
 
-  std::cout << "L2Error is : " << std::sqrt(l2error) << std::endl;
+  // std::cout << "L2Error is : " << std::sqrt(l2error) << std::endl;
   error_table.add_value("error", std::sqrt(l2error));
   error_table.add_value("cells", triangulation.n_global_active_cells());
   error_table.add_value("dofs", dof_handler.n_dofs());
@@ -614,6 +617,7 @@ DGHeat<dim>::run()
       calculateL2Error();
     }
 
+  error_table.omit_column_from_convergence_rate_evaluation("iterations");
   error_table.omit_column_from_convergence_rate_evaluation("cells");
   error_table.evaluate_all_convergence_rates(
     ConvergenceTable::reduction_rate_log2);
@@ -621,6 +625,7 @@ DGHeat<dim>::run()
   error_table.set_scientific("error", true);
 
   error_table.write_text(std::cout);
+  std::cout << std::endl;
 }
 
 int
@@ -629,36 +634,36 @@ main()
   deallog.depth_console(0);
 
   {
-    auto problem = DGHeat<2>::T(1 /*=degree*/, 2, 4);
+    auto problem = DGHeat<2>::TET(1 /*=degree*/, 2, 4);
     problem->run();
   }
   {
-    auto problem = DGHeat<2>::T(2 /*=degree*/, 2, 4);
+    auto problem = DGHeat<2>::TET(2 /*=degree*/, 2, 4);
     problem->run();
   }
   {
-    auto problem = DGHeat<3>::T(1 /*=degree*/, 2, 3);
+    auto problem = DGHeat<3>::TET(1 /*=degree*/, 2, 3);
     problem->run();
   }
   {
-    auto problem = DGHeat<3>::T(2 /*=degree*/, 2, 3);
+    auto problem = DGHeat<3>::TET(2 /*=degree*/, 2, 3);
     problem->run();
   }
 
   {
-    auto problem = DGHeat<2>::H(1 /*=degree*/, 2, 4);
+    auto problem = DGHeat<2>::HEX(1 /*=degree*/, 2, 4);
     problem->run();
   }
   {
-    auto problem = DGHeat<2>::H(2 /*=degree*/, 2, 4);
+    auto problem = DGHeat<2>::HEX(2 /*=degree*/, 2, 4);
     problem->run();
   }
   {
-    auto problem = DGHeat<3>::H(1 /*=degree*/, 2, 3);
+    auto problem = DGHeat<3>::HEX(1 /*=degree*/, 2, 3);
     problem->run();
   }
   {
-    auto problem = DGHeat<3>::H(2 /*=degree*/, 2, 3);
+    auto problem = DGHeat<3>::HEX(2 /*=degree*/, 2, 3);
     problem->run();
   }
 
