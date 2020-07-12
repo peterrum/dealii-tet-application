@@ -783,8 +783,12 @@ namespace Step18
   void
   TopLevel<dim>::create_coarse_grid()
   {
-    const double inner_radius = 0.8, outer_radius = 1;
-    GridGenerator::cylinder_shell(triangulation, 3, inner_radius, outer_radius);
+    const unsigned int n = 5;
+
+    GridGenerator::subdivided_hyper_rectangle(triangulation,
+                                              {1 * n, 1 * n, 3 * n},
+                                              {-0.5, -0.5, 0},
+                                              {+0.5, +0.5, +3});
     for (const auto &cell : triangulation.active_cell_iterators())
       for (const auto &face : cell->face_iterators())
         if (face->at_boundary())
@@ -795,16 +799,9 @@ namespace Step18
               face->set_boundary_id(0);
             else if (face_center[2] == 3)
               face->set_boundary_id(1);
-            else if (std::sqrt(face_center[0] * face_center[0] +
-                               face_center[1] * face_center[1]) <
-                     (inner_radius + outer_radius) / 2)
-              face->set_boundary_id(2);
             else
-              face->set_boundary_id(3);
+              face->set_boundary_id(2);
           }
-
-    // Once all this is done, we can refine the mesh once globally:
-    triangulation.refine_global(1);
 
     // As the final step, we need to set up a clean state of the data that we
     // store in the quadrature points on all cells that are treated on the
@@ -1343,8 +1340,8 @@ namespace Step18
 
         if (cycle == 0)
           create_coarse_grid();
-        else
-          refine_initial_grid();
+        // else
+        //  refine_initial_grid();
 
         pcout << "    Number of active cells:       "
               << triangulation.n_active_cells() << " (by partition:";
@@ -1551,7 +1548,7 @@ namespace Step18
 
     std::vector<bool> vertex_touched(triangulation.n_vertices(), false);
     for (auto &cell : dof_handler.active_cell_iterators())
-      for (unsigned int v = 0; v < GeometryInfo<dim>::vertices_per_cell; ++v)
+      for (unsigned int v = 0; v < cell->n_vertices(); ++v)
         if (vertex_touched[cell->vertex_index(v)] == false)
           {
             vertex_touched[cell->vertex_index(v)] = true;
