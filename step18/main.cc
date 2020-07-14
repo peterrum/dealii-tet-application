@@ -77,6 +77,18 @@
 #include <iomanip>
 #include <iostream>
 
+// simplex
+#include <deal.II/fe/mapping_isoparametric.h>
+
+#include <deal.II/simplex/data_out.h>
+#include <deal.II/simplex/fe_lib.h>
+#include <deal.II/simplex/grid_generator.h>
+#include <deal.II/simplex/quadrature_lib.h>
+
+//#define HEX
+
+const unsigned int degree = 1;
+
 // The last step is as in all previous programs:
 namespace Step18
 {
@@ -426,7 +438,7 @@ namespace Step18
     update_quadrature_point_history();
 
     // This is the new shared Triangulation:
-    parallel::shared::Triangulation<dim> triangulation;
+    Triangulation<dim> triangulation;
 
     FESystem<dim> fe;
 
@@ -442,7 +454,13 @@ namespace Step18
     // the quadrature points, so we have to make sure all parts of the program
     // agree on where they are and how many there are on each cell. Thus, let
     // us first declare the quadrature formula that will be used throughout...
-    const QGauss<dim> quadrature_formula;
+    const Quadrature<dim> quadrature_formula;
+
+#ifdef HEX
+    MappingQGeneric<dim, dim> mapping;
+#else
+    MappingIsoparametric<dim, dim> mapping;
+#endif
 
     // ... and then also have a vector of history objects, one per quadrature
     // point on those cells for which we are responsible (i.e. we don't store
@@ -721,12 +739,14 @@ namespace Step18
   // for each of the <code>dim</code> vector components of the solution, and a
   // Gaussian quadrature formula with 2 points in each coordinate
   // direction. The destructor should be obvious:
+#ifdef HEX
   template <int dim>
   TopLevel<dim>::TopLevel()
-    : triangulation(MPI_COMM_WORLD)
-    , fe(FE_Q<dim>(1), dim)
+    : triangulation()
+    , fe(FE_Q<dim>(degree), dim)
     , dof_handler(triangulation)
-    , quadrature_formula(fe.degree + 1)
+    , quadrature_formula(QGauss<dim>(fe.degree + 1))
+    , mapping(1)
     , present_time(0.0)
     , present_timestep(1.0)
     , end_time(10.0)
@@ -736,6 +756,24 @@ namespace Step18
     , this_mpi_process(Utilities::MPI::this_mpi_process(mpi_communicator))
     , pcout(std::cout, this_mpi_process == 0)
   {}
+#else
+  template <int dim>
+  TopLevel<dim>::TopLevel()
+    : triangulation()
+    , fe(Simplex::FE_P<dim>(degree), dim)
+    , dof_handler(triangulation)
+    , quadrature_formula(Simplex::PGauss<dim>(fe.degree == 1 ? 4 : 10))
+    , mapping(Simplex::FE_P<dim>(1))
+    , present_time(0.0)
+    , present_timestep(1.0)
+    , end_time(10.0)
+    , timestep_no(0)
+    , mpi_communicator(MPI_COMM_WORLD)
+    , n_mpi_processes(Utilities::MPI::n_mpi_processes(mpi_communicator))
+    , this_mpi_process(Utilities::MPI::this_mpi_process(mpi_communicator))
+    , pcout(std::cout, this_mpi_process == 0)
+  {}
+#endif
 
 
 
@@ -785,10 +823,18 @@ namespace Step18
   {
     const unsigned int n = 5;
 
+#ifdef HEX
     GridGenerator::subdivided_hyper_rectangle(triangulation,
                                               {1 * n, 1 * n, 3 * n},
                                               {-0.5, -0.5, 0},
                                               {+0.5, +0.5, +3});
+#else
+    Simplex::GridGenerator::subdivided_hyper_rectangle(triangulation,
+                                                       {1 * n, 1 * n, 3 * n},
+                                                       {-0.5, -0.5, 0},
+                                                       {+0.5, +0.5, +3});
+#endif
+
     for (const auto &cell : triangulation.active_cell_iterators())
       for (const auto &face : cell->face_iterators())
         if (face->at_boundary())
@@ -945,7 +991,8 @@ namespace Step18
     system_rhs    = 0;
     system_matrix = 0;
 
-    FEValues<dim> fe_values(fe,
+    FEValues<dim> fe_values(mapping,
+                            fe,
                             quadrature_formula,
                             update_values | update_gradients |
                               update_quadrature_points | update_JxW_values);
@@ -1085,11 +1132,13 @@ namespace Step18
     // motion, it has only its last component set:
     FEValuesExtractors::Scalar                z_component(dim - 1);
     std::map<types::global_dof_index, double> boundary_values;
-    VectorTools::interpolate_boundary_values(dof_handler,
+    VectorTools::interpolate_boundary_values(mapping,
+                                             dof_handler,
                                              0,
                                              Functions::ZeroFunction<dim>(dim),
                                              boundary_values);
     VectorTools::interpolate_boundary_values(
+      mapping,
       dof_handler,
       1,
       IncrementalBoundaryValues<dim>(present_time, present_timestep),
@@ -1186,6 +1235,22 @@ namespace Step18
   void
   TopLevel<dim>::output_results() const
   {
+#ifndef HEX
+    std::string fname =
+      "struct." + Utilities::int_to_string(timestep_no) + ".vtk";
+
+    std::ofstream output(fname.c_str());
+
+    DoFHandler<dim> dof_handler_(triangulation);
+    dof_handler_.distribute_dofs(Simplex::FE_P<dim>(degree));
+
+    Vector<double> incremental_displacement_(dof_handler_.n_dofs());
+
+    Simplex::DataOut::write_vtk(
+      mapping, dof_handler_, incremental_displacement_, "delta", output);
+    return;
+#endif
+
     DataOut<dim> data_out;
     data_out.attach_dof_handler(dof_handler);
 
@@ -1334,7 +1399,7 @@ namespace Step18
     pcout << "Timestep " << timestep_no << " at time " << present_time
           << std::endl;
 
-    for (unsigned int cycle = 0; cycle < 2; ++cycle)
+    for (unsigned int cycle = 0; cycle < 1; ++cycle)
       {
         pcout << "  Cycle " << cycle << ':' << std::endl;
 
@@ -1425,8 +1490,7 @@ namespace Step18
 
     // Then set up a global vector into which we merge the local indicators
     // from each of the %parallel processes:
-    const unsigned int n_local_cells =
-      triangulation.n_locally_owned_active_cells();
+    const unsigned int n_local_cells = triangulation.n_active_cells();
 
     PETScWrappers::MPI::Vector distributed_error_per_cell(
       mpi_communicator, triangulation.n_active_cells(), n_local_cells);
@@ -1608,8 +1672,8 @@ namespace Step18
       std::vector<PointHistory<dim>> tmp;
       quadrature_point_history.swap(tmp);
     }
-    quadrature_point_history.resize(
-      triangulation.n_locally_owned_active_cells() * quadrature_formula.size());
+    quadrature_point_history.resize(triangulation.n_active_cells() *
+                                    quadrature_formula.size());
 
     // Finally loop over all cells again and set the user pointers from the
     // cells that belong to the present processor to point to the first
@@ -1691,7 +1755,8 @@ namespace Step18
     // the incremental displacements and the gradients thereof at the
     // quadrature points, together with a vector that will hold this
     // information:
-    FEValues<dim> fe_values(fe,
+    FEValues<dim> fe_values(mapping,
+                            fe,
                             quadrature_formula,
                             update_values | update_gradients);
 

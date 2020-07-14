@@ -1,0 +1,4 @@
+SET(TARGET_SRC main.cc)
+ADD_EXECUTABLE( "dataout" ${TARGET_SRC})
+DEAL_II_SETUP_TARGET("dataout")
+TARGET_LINK_LIBRARIES("dataout" "ceed")
