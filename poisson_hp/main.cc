@@ -56,6 +56,7 @@
 #include <deal.II/simplex/grid_generator.h>
 #include <deal.II/simplex/quadrature_lib.h>
 
+#include "../include/grid_generator.h"
 #include "../include/partition.h"
 
 using namespace dealii;
@@ -275,19 +276,25 @@ test(const Triangulation<dim, spacedim> &tria,
   pcout << "   with " << solver_control.last_step()
         << " CG iterations needed to obtain convergence" << std::endl;
 
+  // system_rhs.print(std::cout);
+  // solution.print(std::cout);
+
+  bool hex_mesh = true;
+
+  for (const auto &cell : tria.active_cell_iterators())
+    hex_mesh &= (cell->n_vertices() == GeometryInfo<dim>::vertices_per_cell);
+
   {
     solution.update_ghost_values();
 
-    DataOutBase::VtkFlags flags;
-    flags.write_higher_order_cells = true;
-
     DataOut<dim> data_out;
-    data_out.set_flags(flags);
     data_out.attach_dof_handler(dof_handler);
     data_out.add_data_vector(solution, "solution");
     data_out.build_patches(mappings, degree);
     std::ofstream output(
-      "solution_" + (dim == 2 ? std::string("qua.") : std::string("hex.")) +
+      "solution_" +
+      (hex_mesh ? (dim == 2 ? std::string("qua.") : std::string("hex.")) :
+                  (dim == 2 ? std::string("tri.") : std::string("tet."))) +
       std::to_string(Utilities::MPI::this_mpi_process(comm)) + ".vtk");
     data_out.write_vtk(output);
   }
@@ -334,8 +341,14 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
   if (params.use_grid_generator)
     {
       // ...via Simplex::GridGenerator
-      Simplex::GridGenerator::subdivided_hyper_rectangle(
-        *tria, params.repetitions, params.p1, params.p2, false);
+#if true
+      if (dim == 2)
+        Simplex::GridGenerator::subdivided_hyper_rectangle_(
+          *tria, params.repetitions, params.p1, params.p2, false);
+      else
+#endif
+        Simplex::GridGenerator::subdivided_hyper_rectangle(
+          *tria, params.repetitions, params.p1, params.p2, false);
     }
   else
     {

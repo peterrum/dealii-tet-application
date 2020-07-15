@@ -62,6 +62,21 @@
 
 using namespace dealii;
 
+template <int dim>
+class RightHandSideFunction : public Function<dim>
+{
+public:
+  RightHandSideFunction(const unsigned int n_components)
+    : Function<dim>(n_components)
+  {}
+
+  virtual double
+  value(const Point<dim> &p, const unsigned int component = 0) const
+  {
+    return p[component % dim] * p[component % dim];
+  }
+};
+
 void
 test(const unsigned int degree)
 {
@@ -115,6 +130,12 @@ test(const unsigned int degree)
   FE_Q<dim, spacedim>             fe2(degree);
   hp::FECollection<dim, spacedim> fes(fe1, fe2);
 
+  MappingIsoparametric<dim>            mapping1(Simplex::FE_P<dim>(1));
+  MappingQ<dim, spacedim>              mapping2(1);
+  hp::MappingCollection<dim, spacedim> mappings; // TODO!!!
+  mappings.push_back(mapping1);
+  mappings.push_back(mapping2);
+
   dof_handler.distribute_dofs(fes);
 
   std::vector<types::global_dof_index> dof_indices;
@@ -132,6 +153,20 @@ test(const unsigned int degree)
   GridOut       grid_out;
   std::ofstream out("hp-mesh.vtk");
   grid_out.write_vtk(tria, out);
+
+  Vector<double> solution(dof_handler.n_dofs());
+
+  // VectorTools::interpolate(mappings,
+  //                         dof_handler,
+  //                         RightHandSideFunction<dim>(1),
+  //                         solution);
+
+  DataOut<dim> data_out;
+  data_out.attach_dof_handler(dof_handler);
+  data_out.add_data_vector(solution, "solution");
+  data_out.build_patches(mappings, degree);
+  std::ofstream output("hp-data_.vtk");
+  data_out.write_vtk(output);
 }
 
 int
@@ -142,6 +177,7 @@ main()
   test(/*degree=*/1);
   std::cout << std::endl << std::endl;
 
+  // if(false)
   test(/*degree=*/2);
 
   return 0;
