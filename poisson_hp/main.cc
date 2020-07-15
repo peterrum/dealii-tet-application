@@ -145,20 +145,26 @@ test(const Triangulation<dim, spacedim> &tria,
     else
       cell->set_active_fe_index(1);
 
+  static unsigned int                               X        = -1;
+  static std::array<std::array<unsigned int, 3>, 4> n_points = {{
+    {X, X, X}, // 0-D
+    {X, 2, 3}, // 1-D
+    {X, 3, 7}, // 2-D
+    {X, 4, 10} // 3-D
+  }};
+
   // setup finite element
   Simplex::FE_P<dim, spacedim>    fe1(degree);
   FE_Q<dim, spacedim>             fe2(degree);
   hp::FECollection<dim, spacedim> fes(fe1, fe2);
 
   // setup quadrature rule
-  Simplex::PGauss<dim> quad1(dim == 2 ? (degree == 1 ? 3 : 7) :
-                                        (degree == 1 ? 4 : 10));
+  Simplex::PGauss<dim> quad1(n_points[dim][degree]);
   QGauss<dim>          quad2(degree + 1);
   hp::QCollection<dim> quads(quad1, quad2);
 
   // setup face quadrature rule
-  Simplex::PGauss<dim - 1> face_quad1(dim == 2 ? (degree == 1 ? 2 : 3) :
-                                                 (degree == 1 ? 3 : 7));
+  Simplex::PGauss<dim - 1> face_quad1(n_points[dim - 1][degree]);
   QGauss<dim - 1>          face_quad2(degree + 1);
   hp::QCollection<dim - 1> face_quads(face_quad1, face_quad2);
 
