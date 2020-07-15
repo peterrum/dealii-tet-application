@@ -172,9 +172,7 @@ test(const Triangulation<dim, spacedim> &tria,
   // setup mapping
   MappingIsoparametric<dim>            mapping1(Simplex::FE_P<dim>(1));
   MappingQ<dim, spacedim>              mapping2(1);
-  hp::MappingCollection<dim, spacedim> mappings; // TODO!!!
-  mappings.push_back(mapping1);
-  mappings.push_back(mapping2);
+  hp::MappingCollection<dim, spacedim> mappings(mapping1, mapping2);
 
   dof_handler.distribute_dofs(fes);
 
@@ -243,9 +241,8 @@ test(const Triangulation<dim, spacedim> &tria,
                             fe_values.JxW(q_index));            // dx
           }
 
-      for (const auto &face : cell->face_indices())
-        if (cell->face(face)->at_boundary() &&
-            (cell->face(face)->boundary_id() == 1))
+      for (const auto &face : cell->face_iterators())
+        if (face->at_boundary() && (face->boundary_id() == 1))
           {
             hp_fe_face_values.reinit(cell, face); // TODO !!!
 
