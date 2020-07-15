@@ -93,10 +93,7 @@ get_communicator(const Triangulation<dim, spacedim> &tria)
 template <int dim, int spacedim = dim>
 void
 test(const Triangulation<dim, spacedim> &tria,
-     const FiniteElement<dim, spacedim> &fe,
-     const Quadrature<dim> &             quad,
-     const Quadrature<dim - 1> &         face_quad,
-     const Mapping<dim, spacedim> &      mapping,
+     const unsigned int                  degree,
      const double                        r_boundary)
 {
   ConditionalOStream pcout(
@@ -140,13 +137,43 @@ test(const Triangulation<dim, spacedim> &tria,
 
 
   DoFHandler<dim, spacedim> dof_handler(tria, true /*hp*/);
-  dof_handler.distribute_dofs(fe);
+
+  for (const auto &cell : dof_handler.active_cell_iterators())
+    if (cell->reference_cell_type() == ReferenceCell::Type::Tri ||
+        cell->reference_cell_type() == ReferenceCell::Type::Tet)
+      cell->set_active_fe_index(0);
+    else
+      cell->set_active_fe_index(1);
+
+  // setup finite element
+  Simplex::FE_P<dim, spacedim>    fe1(degree);
+  FE_Q<dim, spacedim>             fe2(degree);
+  hp::FECollection<dim, spacedim> fes(fe1, fe2);
+
+  // setup quadrature rule
+  Simplex::PGauss<dim> quad1(dim == 2 ? (degree == 1 ? 3 : 7) :
+                                        (degree == 1 ? 4 : 10));
+  QGauss<dim>          quad2(degree + 1);
+  hp::QCollection<dim> quads(quad1, quad2);
+
+  // setup face quadrature rule
+  Simplex::PGauss<dim - 1> face_quad1(dim == 2 ? (degree == 1 ? 2 : 3) :
+                                                 (degree == 1 ? 3 : 7));
+  QGauss<dim - 1>          face_quad2(degree + 1);
+  hp::QCollection<dim - 1> face_quads(face_quad1, face_quad2);
+
+  // setup mapping
+  MappingIsoparametric<dim>            mapping1(Simplex::FE_P<dim>(1));
+  MappingQ<dim, spacedim>              mapping2(1);
+  hp::MappingCollection<dim, spacedim> mappings; // TODO!!!
+  mappings.push_back(mapping1);
+  mappings.push_back(mapping2);
+
+  dof_handler.distribute_dofs(fes);
 
   AffineConstraints<double> constraint_matrix;
   DoFTools::make_zero_boundary_constraints(dof_handler, 0, constraint_matrix);
   constraint_matrix.close();
-
-  // constraint_matrix.print(std::cout);
 
   const MPI_Comm comm = get_communicator(dof_handler.get_triangulation());
 
@@ -173,30 +200,28 @@ test(const Triangulation<dim, spacedim> &tria,
 
   const UpdateFlags flag = update_JxW_values | update_values |
                            update_gradients | update_quadrature_points;
-  FEValues<dim, spacedim> fe_values(mapping, fe, quad, flag);
 
-  std::shared_ptr<FEFaceValues<dim, spacedim>> fe_face_values;
-
-#if true
-  fe_face_values.reset(
-    new FEFaceValues<dim, spacedim>(mapping, fe, face_quad, flag));
-#endif
-
-  const unsigned int dofs_per_cell = fe.dofs_per_cell;
-  const unsigned int n_q_points    = quad.size();
-
-  std::vector<types::global_dof_index> dof_indices(dofs_per_cell);
-  FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
-  Vector<double>     cell_rhs(dofs_per_cell);
+  hp::FEValues<dim, spacedim>     hp_fe_values(mappings, fes, quads, flag);
+  hp::FEFaceValues<dim, spacedim> hp_fe_face_values(mappings,
+                                                    fes,
+                                                    face_quads,
+                                                    flag);
 
   for (const auto &cell : dof_handler.cell_iterators())
     {
       if (!cell->is_locally_owned())
         continue;
 
-      fe_values.reinit(cell);
-      cell_matrix = 0;
-      cell_rhs    = 0;
+      hp_fe_values.reinit(cell);
+
+      auto &fe_values = hp_fe_values.get_present_fe_values();
+
+      const unsigned int dofs_per_cell = fe_values.dofs_per_cell;
+      const unsigned int n_q_points    = fe_values.n_quadrature_points;
+
+      std::vector<types::global_dof_index> dof_indices(dofs_per_cell);
+      FullMatrix<double> cell_matrix(dofs_per_cell, dofs_per_cell);
+      Vector<double>     cell_rhs(dofs_per_cell);
 
       for (unsigned int q_index = 0; q_index < n_q_points; ++q_index)
         for (unsigned int i = 0; i < dofs_per_cell; ++i)
@@ -211,18 +236,22 @@ test(const Triangulation<dim, spacedim> &tria,
                             fe_values.JxW(q_index));            // dx
           }
 
-      if (fe_face_values)
-        for (const auto &face : cell->face_iterators())
-          if (face->at_boundary() && (face->boundary_id() == 1))
-            {
-              fe_face_values->reinit(cell, face);
-              for (unsigned int q = 0; q < face_quad.size(); ++q)
-                for (unsigned int i = 0; i < dofs_per_cell; ++i)
-                  cell_rhs(i) +=
-                    (1.0 *                               // 1.0
-                     fe_face_values->shape_value(i, q) * // phi_i(x_q)
-                     fe_face_values->JxW(q));            // dx
-            }
+      for (const auto &face : cell->face_indices())
+        if (cell->face(face)->at_boundary() &&
+            (cell->face(face)->boundary_id() == 1))
+          {
+            hp_fe_face_values.reinit(cell, face); // TODO !!!
+
+            auto &fe_face_values = hp_fe_face_values.get_present_fe_values();
+
+            const unsigned int n_q_points = fe_face_values.n_quadrature_points;
+
+            for (unsigned int q = 0; q < n_q_points; ++q)
+              for (unsigned int i = 0; i < dofs_per_cell; ++i)
+                cell_rhs(i) += (1.0 *                              // 1.0
+                                fe_face_values.shape_value(i, q) * // phi_i(x_q)
+                                fe_face_values.JxW(q));            // dx
+          }
 
       cell->get_dof_indices(dof_indices);
 
@@ -240,41 +269,22 @@ test(const Triangulation<dim, spacedim> &tria,
   pcout << "   with " << solver_control.last_step()
         << " CG iterations needed to obtain convergence" << std::endl;
 
-  // system_rhs.print(std::cout);
-  // solution.print(std::cout);
+  {
+    solution.update_ghost_values();
 
-  bool hex_mesh = true;
+    DataOutBase::VtkFlags flags;
+    flags.write_higher_order_cells = true;
 
-  for (const auto &cell : tria.active_cell_iterators())
-    hex_mesh &= (cell->n_vertices() == GeometryInfo<dim>::vertices_per_cell);
-
-  if (hex_mesh)
-    {
-      solution.update_ghost_values();
-
-      DataOutBase::VtkFlags flags;
-      flags.write_higher_order_cells = true;
-
-      DataOut<dim> data_out;
-      data_out.set_flags(flags);
-      data_out.attach_dof_handler(dof_handler);
-      data_out.add_data_vector(solution, "solution");
-      data_out.build_patches(mapping, fe.degree);
-      std::ofstream output(
-        "solution_" + (dim == 2 ? std::string("qua.") : std::string("hex.")) +
-        std::to_string(Utilities::MPI::this_mpi_process(comm)) + ".vtk");
-      data_out.write_vtk(output);
-    }
-  else
-    {
-      solution.update_ghost_values();
-
-      std::ofstream output(
-        "solution_" + (dim == 2 ? std::string("tri.") : std::string("tet.")) +
-        std::to_string(Utilities::MPI::this_mpi_process(comm)) + ".vtk");
-      Simplex::DataOut::write_vtk(
-        mapping, dof_handler, solution, "solution", output);
-    }
+    DataOut<dim> data_out;
+    data_out.set_flags(flags);
+    data_out.attach_dof_handler(dof_handler);
+    data_out.add_data_vector(solution, "solution");
+    data_out.build_patches(mappings, degree);
+    std::ofstream output(
+      "solution_" + (dim == 2 ? std::string("qua.") : std::string("hex.")) +
+      std::to_string(Utilities::MPI::this_mpi_process(comm)) + ".vtk");
+    data_out.write_vtk(output);
+  }
 
   pcout << std::endl;
 }
@@ -354,20 +364,8 @@ test_tet(const MPI_Comm &comm, const Parameters<dim> &params)
                     ".vtk");
   grid_out.write_vtk(*tria, out);
 
-  // 3) Select components
-  Simplex::FE_P<dim> fe(params.degree);
-
-  Simplex::PGauss<dim> quad(dim == 2 ? (params.degree == 1 ? 3 : 7) :
-                                       (params.degree == 1 ? 4 : 10));
-
-  Simplex::PGauss<dim - 1> face_quad(dim == 2 ? (params.degree == 1 ? 2 : 3) :
-                                                (params.degree == 1 ? 3 : 7));
-
-  Simplex::FE_P<dim>        fe_mapping(1);
-  MappingIsoparametric<dim> mapping(fe_mapping);
-
   // 4) Perform test (independent of mesh type)
-  test(*tria, fe, quad, face_quad, mapping, params.p2[0]);
+  test(*tria, params.degree, params.p2[0]);
 }
 
 template <int dim, int spacedim = dim>
@@ -399,17 +397,8 @@ test_hex(const MPI_Comm &comm, const Parameters<dim> &params)
                     ".vtk");
   grid_out.write_vtk(tria, out);
 
-  // 3) Select components
-  FE_Q<dim> fe(params.degree);
-
-  QGauss<dim> quad(params.degree + 1);
-
-  QGauss<dim - 1> quad_face(params.degree + 1);
-
-  MappingQ<dim, spacedim> mapping(1);
-
   // 4) Perform test (independent of mesh type)
-  test(tria, fe, quad, quad_face, mapping, params.p2[0]);
+  test(tria, params.degree, params.p2[0]);
 }
 
 int
